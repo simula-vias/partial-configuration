@@ -168,7 +168,7 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
 
     input_preprocessor = ColumnTransformer(
         transformers=[
-            ("num", StandardScaler(), input_columns_cont),
+            #("num", StandardScaler(), input_columns_cont),
             (
                 "cat",
                 OneHotEncoder(
@@ -183,7 +183,7 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
     )
     config_preprocessor = ColumnTransformer(
         transformers=[
-            ("num", StandardScaler(), config_columns_cont),
+            #("num", StandardScaler(), config_columns_cont),
             (
                 "cat",
                 OneHotEncoder(
