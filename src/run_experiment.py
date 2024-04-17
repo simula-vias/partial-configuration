@@ -11,11 +11,15 @@ from pathlib import Path
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import KFold, train_test_split
 from mlxtend.frequent_patterns import fpgrowth, fpmax
+from sklearn.preprocessing import LabelEncoder
+from sklearn.tree import DecisionTreeClassifier
 
 # %%
 data_dir = Path("../data")
 random_state = 1234
 test_size = 0.2
+
+# TODO Pareto front cut-off parameter
 
 systems = json.load(open(data_dir / "metadata.json")).keys()
 
@@ -95,6 +99,53 @@ for s in systems:
             pareto_rank
         )
 
+        ## HERE GOES SDC
+        cfg_columns = ["configurationID"] + list(config_features.columns)
+        top_cfgs = dataset[cfg_columns + ["inputname"]].groupby(cfg_columns, dropna=False, as_index=False).count().sort_values(
+            "inputname", ascending=False
+        ).configurationID.tolist()
+
+        ## Here we select the configurations by decreasing coverage
+        # If a configuration adds new items, we add it.
+        # We repeat until all inputs are covered.
+
+        covered_inputs = set()
+        num_inputs = dataset.inputname.nunique()
+        input_labels = pd.Series(np.zeros(num_inputs), index=dataset.inputname.unique())
+        selected_configs = []
+
+        for cid in top_cfgs:
+            inpnames = dataset.query("configurationID == @cid").inputname.unique()
+            new_inputs = set(inpnames).difference(covered_inputs)
+            input_labels[list(new_inputs)] = cid
+            covered_inputs.update(new_inputs)
+            selected_configs.append(cid)
+
+            if len(covered_inputs) == num_inputs:
+                print(f"Reached full coverage with {len(selected_configs)} configurations")
+                break
+
+        input_labels = input_labels.sort_index()
+        enc = LabelEncoder()
+        y = enc.fit_transform(input_labels)
+
+        X = input_preprocessor.fit_transform(
+            input_features.query("inputname.isin(@input_labels.index)")
+        )
+
+        clf = DecisionTreeClassifier(max_depth=3)
+        clf.fit(X, y)
+
+        X_test = input_preprocessor.transform(input_features.query("inputname.isin(@test_inp)"))
+        pred_cfg = enc.inverse_transform(clf.predict(X_test)).astype(int)
+
+        inp_pred_map = pd.DataFrame(zip(test_inp, pred_cfg), columns=["inputname", "configurationID"])
+        sdc_ranks = icm_test.merge(inp_pred_map, on=["inputname", "configurationID"])["ranks"]
+
+        print(
+            f"Average rank of the SDC configuration: {sdc_ranks.mean():.2f}+-{sdc_ranks.std():.2f}"
+        )
+
         ## These are our evaluation baselines
         # The best configuration by averaging the ranks over all inputs
         best_cfg_id_overall = (
@@ -151,6 +202,9 @@ for s in systems:
             (
                 s,
                 split_idx,
+                len(selected_configs),
+                sdc_ranks.mean(),
+                sdc_ranks.std(),
                 overall_ranks.mean(),
                 overall_ranks.std(),
                 metric_rank.mean(),
@@ -163,13 +217,15 @@ for s in systems:
         )
 
     print("")
-    # break
 
 baseline_df = pd.DataFrame(
     baseline_results,
     columns=[
         "system",
         "split",
+        "configs",
+        "sdc_avg",
+        "sdc_std",
         "overall_avg",
         "overall_std",
         "metric_avg",
@@ -184,11 +240,11 @@ baseline_df.to_csv("../results/baselines.csv", index=False)
 
 # %%
 ## Print baseline table
-baselines = ["overall", "metric", "common", "random"]
-print("System & SDC & " + " & ".join(map(lambda s: s.capitalize(), baselines)) + "\\\\\\")
+baselines = ["sdc", "overall", "metric", "common", "random"]
+print("System & " + " & ".join(map(lambda s: s.capitalize(), baselines)) + "\\\\\\")
 for r, v in baseline_df.groupby("system").mean().iterrows():
     res = " & ".join(["${avg:.2f}\\pm{std:.2f}$".format(avg=v[f"{b}_avg"], std=v[f"{b}_std"]) for b in baselines])
-    print(f"{r} & & {res} \\\\")
+    print(f"{r} & {res} \\\\")
 
 # %%
 ## Plot Rank/Ratio line graph
