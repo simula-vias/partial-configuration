@@ -7,7 +7,8 @@
 ## Scripts
 
 `src/pci.ipynb`: Starter notebook for data loading and itemset mining.
-`src/common.ipynb`: Functions for data loading and ranking.
+
+`src/common.py`: Functions for data loading and ranking.
 
 ## Data
 
