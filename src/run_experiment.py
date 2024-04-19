@@ -65,9 +65,7 @@ for s in systems:
     inputnames = perf_matrix["inputname"].unique()
 
     ## Baselines
-    for split_idx, (train_inp_idx, test_inp_idx) in enumerate(kf_inp.split(
-        inputnames
-    )):
+    for split_idx, (train_inp_idx, test_inp_idx) in enumerate(kf_inp.split(inputnames)):
         train_inp = inputnames[train_inp_idx]
         test_inp = inputnames[test_inp_idx]
         train_perf = perf_matrix[perf_matrix.inputname.isin(train_inp)]
@@ -101,9 +99,13 @@ for s in systems:
 
         ## HERE GOES SDC
         cfg_columns = ["configurationID"] + list(config_features.columns)
-        top_cfgs = dataset[cfg_columns + ["inputname"]].groupby(cfg_columns, dropna=False, as_index=False).count().sort_values(
-            "inputname", ascending=False
-        ).configurationID.tolist()
+        top_cfgs = (
+            dataset[cfg_columns + ["inputname"]]
+            .groupby(cfg_columns, dropna=False, as_index=False)
+            .count()
+            .sort_values("inputname", ascending=False)
+            .configurationID.tolist()
+        )
 
         ## Here we select the configurations by decreasing coverage
         # If a configuration adds new items, we add it.
@@ -122,7 +124,9 @@ for s in systems:
             selected_configs.append(cid)
 
             if len(covered_inputs) == num_inputs:
-                print(f"Reached full coverage with {len(selected_configs)} configurations")
+                print(
+                    f"Reached full coverage with {len(selected_configs)} configurations"
+                )
                 break
 
         input_labels = input_labels.sort_index()
@@ -133,14 +137,65 @@ for s in systems:
             input_features.query("inputname.isin(@input_labels.index)")
         )
 
-        clf = DecisionTreeClassifier(max_depth=3)
+        # TODO Cross-validation
+        # TODO Is decision tree the best model for the final prediction?
+
+        train_idx, val_idx = train_test_split(
+            np.arange(X.shape[0]), test_size=0.2, random_state=random_state
+        )
+        X_train = X[train_idx]
+        X_val = X[val_idx]
+        y_train = y[train_idx]
+        y_val = y[val_idx]
+        inputnames_val = input_labels.index[val_idx]
+
+        # X_train = X
+        # y_train = y
+        # X_val = X
+        # y_val = y
+        # inputnames_val = input_labels.index
+
+        best_val_rank = 100_000
+        best_depth = 0
+
+        for i in range(1, X.shape[1]):
+            print(i)
+            clf = DecisionTreeClassifier(max_depth=i, random_state=random_state)
+            # clf = RandomForestClassifier()
+            clf.fit(X_train, y_train)
+            val_score = clf.score(X_val, y_val)
+            print("Scores", clf.score(X_train, y_train), val_score)
+
+            # Validation test
+            pred_cfg_lbl = clf.predict(X_val)
+            pred_cfg = enc.inverse_transform(pred_cfg_lbl).astype(int)
+            inp_pred_map = pd.DataFrame(
+                zip(inputnames_val, pred_cfg), columns=["inputname", "configurationID"]
+            )
+            val_rank = icm.merge(inp_pred_map, on=["inputname", "configurationID"])[
+                "ranks"
+            ].mean()
+            print("Val rank", val_rank)
+
+            if val_rank < best_val_rank:
+                best_val_rank = val_rank
+                best_depth = i
+
+        print(f"Best depth {best_depth} ({best_val_rank})")
+        clf = DecisionTreeClassifier(max_depth=best_depth, random_state=random_state)
         clf.fit(X, y)
 
-        X_test = input_preprocessor.transform(input_features.query("inputname.isin(@test_inp)"))
+        X_test = input_preprocessor.transform(
+            input_features.query("inputname.isin(@test_inp)")
+        )
         pred_cfg = enc.inverse_transform(clf.predict(X_test)).astype(int)
 
-        inp_pred_map = pd.DataFrame(zip(test_inp, pred_cfg), columns=["inputname", "configurationID"])
-        sdc_ranks = icm_test.merge(inp_pred_map, on=["inputname", "configurationID"])["ranks"]
+        inp_pred_map = pd.DataFrame(
+            zip(test_inp, pred_cfg), columns=["inputname", "configurationID"]
+        )
+        sdc_ranks = icm_test.merge(inp_pred_map, on=["inputname", "configurationID"])[
+            "ranks"
+        ]
 
         print(
             f"Average rank of the SDC configuration: {sdc_ranks.mean():.2f}+-{sdc_ranks.std():.2f}"
@@ -239,11 +294,16 @@ baseline_df = pd.DataFrame(
 baseline_df.to_csv("../results/baselines.csv", index=False)
 
 # %%
-## Print baseline table
+## Print baseline table in latex
 baselines = ["sdc", "overall", "metric", "common", "random"]
 print("System & " + " & ".join(map(lambda s: s.capitalize(), baselines)) + "\\\\\\")
 for r, v in baseline_df.groupby("system").mean().iterrows():
-    res = " & ".join(["${avg:.2f}\\pm{std:.2f}$".format(avg=v[f"{b}_avg"], std=v[f"{b}_std"]) for b in baselines])
+    res = " & ".join(
+        [
+            "${avg:.2f}\\pm{std:.2f}$".format(avg=v[f"{b}_avg"], std=v[f"{b}_std"])
+            for b in baselines
+        ]
+    )
     print(f"{r} & {res} \\\\")
 
 # %%
