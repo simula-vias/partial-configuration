@@ -121,6 +121,10 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
                 > 0
             ).values
         ]
+    elif system == "nodejs":
+        perf_matrix["ops"] = -perf_matrix[
+            "ops"
+        ]  # ops is the only increasing performance measure
     elif system == "x264":
         # perf_matrix["rel_size"] = perf_matrix["size"] / perf_matrix["ORIG_SIZE"]  # We have `kbs` which is a better alternative
         # perf_matrix["rel_size"] = np.log(perf_matrix["rel_size"])  # To scale value distribution more evenly
