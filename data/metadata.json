@@ -330,8 +330,7 @@
             "COLOR_COMPLEXITY"
         ],
         "performances": [
-            "usertime",
-            "systemtime",
+            "size",
             "etime",
             "cpu",
             "fps",
