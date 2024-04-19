@@ -397,11 +397,15 @@ def wilcoxon_distance(measurements):
     return stat_distance(measurements, stats_fn=stats.wilcoxon)
 
 
-def pareto_rank_numpy(data):
+def pareto_rank_numpy(data, cutoff=None):
     """Calculate the pareto front rank for each row in the numpy array."""
     unassigned = np.ones(len(data), dtype=bool)
     ranks = np.zeros(len(data), dtype=np.int32)
     front = 0
+
+    if cutoff is not None:
+        infeasible = (data > cutoff).any(axis=-1)
+        unassigned[infeasible] = False
 
     while np.any(unassigned):
         front += 1
@@ -421,8 +425,11 @@ def pareto_rank_numpy(data):
         ranks[is_efficient] = front
         unassigned[is_efficient] = False
 
+    if cutoff is not None:
+        ranks[infeasible] = ranks.max() + 1
+
     return ranks
 
 
-def pareto_rank(pd_group):
-    return pd.Series(pareto_rank_numpy(pd_group.values), index=pd_group.index)
+def pareto_rank(pd_group, cutoff=None):
+    return pd.Series(pareto_rank_numpy(pd_group.values, cutoff=cutoff), index=pd_group.index)

@@ -5,12 +5,9 @@ import plotnine as p9
 from scipy import stats
 from common import load_data, pareto_rank
 import json
-import os
 from pathlib import Path
 
-from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import KFold, train_test_split
-from mlxtend.frequent_patterns import fpgrowth, fpmax
 from sklearn.preprocessing import LabelEncoder
 from sklearn.tree import DecisionTreeClassifier
 
@@ -19,7 +16,7 @@ data_dir = Path("../data")
 random_state = 1234
 test_size = 0.2
 
-# TODO Pareto front cut-off parameter
+pareto_cutoff = 0.2
 
 systems = json.load(open(data_dir / "metadata.json")).keys()
 
@@ -36,6 +33,24 @@ for s in systems:
         config_preprocessor,
     ) = load_data(system=s, data_dir="../data")
 
+    # Normalization is needed for the Pareto cutoff
+    # We can normalize before splitting, because
+    # we normalize per input and we also split per input.
+    # There is no data leakage.
+    normalized_metrics = (
+        perf_matrix[["inputname"] + all_performances]
+        .groupby("inputname", as_index=False)
+        .transform(lambda x: (x - x.min()) / (x.max() - x.min()))
+    )
+    cutoff_mask = (normalized_metrics <= pareto_cutoff).all(axis=1)
+
+    nmdf = perf_matrix[["inputname"] + all_performances].groupby("inputname", as_index=True).transform(lambda x: (x - x.min()) / (x.max() - x.min()))
+    perf_matrix = pd.merge(perf_matrix, nmdf, suffixes=("_raw", None), left_index=True, right_index=True)
+    perf_matrix["feasible"] = cutoff_mask
+
+    all_perf_raw = [f"{p}_raw" for p in all_performances]
+    all_perf_norm = [f"{p}" for p in all_performances]
+
     icm_all = (
         perf_matrix[["inputname", "configurationID"] + all_performances]
         .sort_values(["inputname", "configurationID"])
@@ -46,7 +61,7 @@ for s in systems:
     ).transform(  # Go from measured values to ranks within each input group
         lambda x: stats.rankdata(x, method="min")
     )
-    icm_all["ranks"] = icm_all.groupby("inputname", group_keys=False).apply(pareto_rank)
+    icm_all["ranks"] = icm_all.groupby("inputname", group_keys=False).apply(lambda x: pareto_rank(x, cutoff=pareto_cutoff))
 
     ## Rank/Ratio Line Graph
     num_cfgs = config_features.shape[0]
@@ -81,7 +96,7 @@ for s in systems:
         ).transform(  # Go from measured values to ranks within each input group
             lambda x: stats.rankdata(x, method="min")
         )
-        icm["ranks"] = icm.groupby("inputname", group_keys=False).apply(pareto_rank)
+        icm["ranks"] = icm.groupby("inputname", group_keys=False).apply(lambda x: pareto_rank(x, cutoff=pareto_cutoff))
 
         dataset = (
             icm[icm.ranks <= 1].join(config_features).join(input_features).reset_index()
@@ -94,7 +109,7 @@ for s in systems:
             .set_index(["inputname", "configurationID"])
         )
         icm_test["ranks"] = icm_test.groupby("inputname", group_keys=False).apply(
-            pareto_rank
+            lambda x: pareto_rank(x, cutoff=pareto_cutoff)
         )
 
         ## HERE GOES SDC
