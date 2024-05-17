@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotnine as p9
 from scipy import stats
+from sklearn.ensemble import RandomForestClassifier
 from common import load_data, pareto_rank
 import json
 from pathlib import Path
@@ -176,7 +177,7 @@ for s in systems:
         for i in range(1, X.shape[1]):
             print(i)
             clf = DecisionTreeClassifier(max_depth=i, random_state=random_state)
-            # clf = RandomForestClassifier()
+            # clf = RandomForestClassifier(n_estimators=10, max_depth=i)
             clf.fit(X_train, y_train)
             val_score = clf.score(X_val, y_val)
             print("Scores", clf.score(X_train, y_train), val_score)
@@ -198,6 +199,7 @@ for s in systems:
 
         print(f"Best depth {best_depth} ({best_val_rank})")
         clf = DecisionTreeClassifier(max_depth=best_depth, random_state=random_state)
+        # clf = RandomForestClassifier(n_estimators=10, max_depth=best_depth, random_state=random_state)
         clf.fit(X, y)
 
         X_test = input_preprocessor.transform(
