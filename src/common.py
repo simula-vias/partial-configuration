@@ -172,7 +172,7 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
 
     input_preprocessor = ColumnTransformer(
         transformers=[
-            #("num", StandardScaler(), input_columns_cont),
+            # ("num", StandardScaler(), input_columns_cont),
             (
                 "cat",
                 OneHotEncoder(
@@ -187,7 +187,7 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
     )
     config_preprocessor = ColumnTransformer(
         transformers=[
-            #("num", StandardScaler(), config_columns_cont),
+            # ("num", StandardScaler(), config_columns_cont),
             (
                 "cat",
                 OneHotEncoder(
@@ -431,5 +431,33 @@ def pareto_rank_numpy(data, cutoff=None):
     return ranks
 
 
-def pareto_rank(pd_group, cutoff=None):
-    return pd.Series(pareto_rank_numpy(pd_group.values, cutoff=cutoff), index=pd_group.index)
+def fonseca_fleming_rank(data, cutoff=None):
+    rank = np.zeros(data.shape[0])  # initialize ranks
+
+    # We make a n x n matrix and check for strictly smaller data on all measures
+    dominated_counts = (data < data[:, None]).all(axis=-1).sum(axis=1)
+
+    # +1 because the first rank is 1 (rank(x_i)  = 1 + p_i)
+    # p_i the number of items by which x_i is dominated
+    rank = dominated_counts + 1
+
+    if cutoff is not None:
+        infeasible = (data > cutoff).any(axis=-1)
+        rank[infeasible] = rank.max() + 1
+
+    return rank
+
+
+def pareto_rank(pd_group, cutoff=None, rank_by_domination_count=True):
+    if rank_by_domination_count:
+        rank_fn = fonseca_fleming_rank
+    else:
+        rank_fn = pareto_rank_numpy
+
+    return pd.Series(
+        rank_fn(
+            pd_group.values,
+            cutoff=cutoff,
+        ),
+        index=pd_group.index,
+    )
