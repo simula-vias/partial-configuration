@@ -7,6 +7,7 @@ from scipy import stats
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import KFold, train_test_split
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.base import BaseEstimator, ClassifierMixin
 
 
 def find_files(path, ext="csv"):
@@ -142,6 +143,12 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
             > 0
         ).all(axis=1)
     ]
+
+    # Correlation of performances
+    # 1. Drops performances with perfect correlation
+    # 2. Sorts performances by increasing avg. correlation
+    perf_correlations = perf_matrix[performances].corr().drop_duplicates()
+    performances = perf_correlations.mean(axis=1).sort_values().index.tolist()
 
     inputs_after_filter = len(perf_matrix.inputname.unique())
     configs_after_filter = len(perf_matrix.configurationID.unique())
@@ -461,3 +468,98 @@ def pareto_rank(pd_group, cutoff=None, rank_by_domination_count=True):
         ),
         index=pd_group.index,
     )
+
+
+def common_labels_impurity(X, y):
+    label_counts = np.bincount(y)
+    unique_X_count = np.unique(X, axis=0).shape[0]
+    impurity = unique_X_count - label_counts.max()
+    return impurity
+
+
+class DecisionTreeClassifierWithMultipleLabels(BaseEstimator, ClassifierMixin):
+    def __init__(self, max_depth=None, min_samples_split=2, random_state=None):
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.tree_ = None
+
+    def fit(self, X, y):
+        self.tree_ = self._build_tree(X, y, depth=0)
+        return self
+
+    def _build_tree(self, X, y, depth):
+        if len(y) == 0:
+            return None
+
+        # Impurity
+        impurity = common_labels_impurity(X, y)
+
+        # Check stopping conditions
+        if depth == self.max_depth or len(y) < self.min_samples_split or impurity == 0:
+            # label_counts = np.bincount(y)
+            label_uniq, label_counts = np.unique(y, return_counts=True)
+            return {"type": "leaf", "class": label_uniq[np.argmax(label_counts)]}
+
+        # Find the best split
+        best_split = None
+        best_impurity = impurity
+        for feature in range(X.shape[1]):
+            thresholds = np.unique(X[:, feature])
+            for threshold in thresholds:
+                left_mask = X[:, feature] <= threshold
+                right_mask = ~left_mask
+                left_y, right_y = y[left_mask], y[right_mask]
+
+                if len(left_y) == 0 or len(right_y) == 0:
+                    continue
+
+                left_impurity = common_labels_impurity(X[left_mask], left_y)
+                right_impurity = common_labels_impurity(X[right_mask], right_y)
+
+                # TODO This is probably not ideal for cases where X can have duplicates
+                weighted_impurity = (
+                    len(left_y) * left_impurity + len(right_y) * right_impurity
+                ) / len(y)
+
+                if weighted_impurity < best_impurity:
+                    best_impurity = weighted_impurity
+                    best_split = {
+                        "feature": feature,
+                        "threshold": threshold,
+                        "left_mask": left_mask,
+                        "right_mask": right_mask,
+                        "left_y": left_y,
+                        "right_y": right_y,
+                    }
+
+        if best_split is None:
+            label_uniq, label_counts = np.unique(y, return_counts=True)
+            return {"type": "leaf", "class": label_uniq[np.argmax(label_counts)]}
+
+        # Recursively build the left and right subtrees
+        left_subtree = self._build_tree(
+            X[best_split["left_mask"]], best_split["left_y"], depth + 1
+        )
+        right_subtree = self._build_tree(
+            X[best_split["right_mask"]], best_split["right_y"], depth + 1
+        )
+
+        return {
+            "type": "node",
+            "feature": best_split["feature"],
+            "threshold": best_split["threshold"],
+            "left": left_subtree,
+            "right": right_subtree,
+        }
+
+    def predict(self, X):
+        return np.array([self._predict_instance(x) for x in X])
+
+    def _predict_instance(self, x):
+        node = self.tree_
+        while node["type"] != "leaf":
+            if x[node["feature"]] <= node["threshold"]:
+                node = node["left"]
+            else:
+                node = node["right"]
+        return node["class"]
