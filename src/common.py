@@ -6,8 +6,9 @@ import pandas as pd
 from scipy import stats
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import KFold, train_test_split
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.multioutput import _MultiOutputEstimator
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.base import ClassifierMixin
 
 
 def find_files(path, ext="csv"):
@@ -470,6 +471,85 @@ def pareto_rank(pd_group, cutoff=None, rank_by_domination_count=True):
     )
 
 
+def baseline_results(
+    icm,
+    icm_ranked_measures,
+    icm_test,
+    dataset,
+    config_features,
+    verbose=False,
+):
+    ## These are our evaluation baselines
+    # Overall: The best configuration by averaging the ranks over all inputs
+    best_cfg_id_overall = (
+        icm[["ranks"]].groupby("configurationID").mean().idxmin().item()
+    )
+
+    # Metric: The best configuration per performance metric
+    best_cfg_id_per_metric = (
+        icm_ranked_measures.groupby("configurationID").mean().idxmin()
+    )
+
+    # Common: The most common configuration in the Pareto fronts
+    most_common_cfg_id = (
+        dataset[["configurationID"] + [config_features.columns[0]]]
+        .groupby(["configurationID"], as_index=False)
+        .count()
+        .sort_values(by=config_features.columns[0], ascending=False)
+        .iloc[0]
+        .configurationID
+    )
+
+    num_test_inputs = icm_test.index.get_level_values(0).nunique()
+
+    overall_ranks = icm_test.query("configurationID == @best_cfg_id_overall").ranks
+    assert (
+        overall_ranks.shape[0] == num_test_inputs
+    ), "Not all inputs are covered by the overall configurations"
+
+    metric_ranks = (
+        icm_test.query("configurationID.isin(@best_cfg_id_per_metric.values)")
+        .groupby("inputname")
+        .mean()
+        .ranks
+    )
+    assert (
+        metric_ranks.shape[0] == num_test_inputs
+    ), "Not all inputs are covered by the metric configurations"
+
+    common_ranks = icm_test.query("configurationID == @most_common_cfg_id").ranks
+    assert (
+        common_ranks.shape[0] == num_test_inputs
+    ), "Not all inputs are covered by the most common configuration"
+
+    # TODO Not sure std. dev. is correct here. We sample all random configs at once.
+    max_config_id = icm.index.get_level_values(1).max()
+    random_configs = np.random.randint(0, max_config_id, 10) + 1
+    random_ranks = icm_test.query("configurationID.isin(@random_configs)").ranks
+
+    if verbose:
+        print(
+            f"Average rank of the overall best configuration: {overall_ranks.mean():.2f}+-{overall_ranks.std():.2f}"
+        )
+        print(
+            f"Average rank of the most common configuration: {common_ranks.mean():.2f}+-{common_ranks.std():.2f}"
+        )
+        print(
+            f"Average rank of the best configuration for all metrics: {metric_ranks.mean():.2f}+-{metric_ranks.std():.2f}"
+        )
+        print(
+            f"Average rank of random configuration: {random_ranks.mean():.2f}+-{random_ranks.std():.2f}"
+        )
+
+    results = {}
+    results["overall"] = [overall_ranks.mean(), overall_ranks.std()]
+    results["metric"] = [metric_ranks.mean(), metric_ranks.std()]
+    results["common"] = [common_ranks.mean(), common_ranks.std()]
+    results["random"] = [random_ranks.mean(), random_ranks.std()]
+
+    return results
+
+
 def common_labels_impurity(X, y):
     label_counts = np.bincount(y)
     unique_X_count = np.unique(X, axis=0).shape[0]
@@ -477,13 +557,21 @@ def common_labels_impurity(X, y):
     return impurity
 
 
-class DecisionTreeClassifierWithMultipleLabels(BaseEstimator, ClassifierMixin):
+def common_labels_impurity_multiclass(y):
+    impurity = y.shape[0] - y.sum(axis=0).max()
+    return impurity
+
+
+class DecisionTreeClassifierWithMultipleLabels(_MultiOutputEstimator, ClassifierMixin):
     def __init__(self, max_depth=None, min_samples_split=2, random_state=None):
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.tree_ = None
+        self.random_state = random_state
+        self.num_classes = None
 
     def fit(self, X, y):
+        self.num_classes = y.shape[1]
         self.tree_ = self._build_tree(X, y, depth=0)
         return self
 
@@ -492,13 +580,11 @@ class DecisionTreeClassifierWithMultipleLabels(BaseEstimator, ClassifierMixin):
             return None
 
         # Impurity
-        impurity = common_labels_impurity(X, y)
+        impurity = common_labels_impurity_multiclass(y)
 
         # Check stopping conditions
         if depth == self.max_depth or len(y) < self.min_samples_split or impurity == 0:
-            # label_counts = np.bincount(y)
-            label_uniq, label_counts = np.unique(y, return_counts=True)
-            return {"type": "leaf", "class": label_uniq[np.argmax(label_counts)]}
+            return {"type": "leaf", "class": np.argmax(y.sum(axis=0))}
 
         # Find the best split
         best_split = None
@@ -513,8 +599,8 @@ class DecisionTreeClassifierWithMultipleLabels(BaseEstimator, ClassifierMixin):
                 if len(left_y) == 0 or len(right_y) == 0:
                     continue
 
-                left_impurity = common_labels_impurity(X[left_mask], left_y)
-                right_impurity = common_labels_impurity(X[right_mask], right_y)
+                left_impurity = common_labels_impurity_multiclass(left_y)
+                right_impurity = common_labels_impurity_multiclass(right_y)
 
                 # TODO This is probably not ideal for cases where X can have duplicates
                 weighted_impurity = (
@@ -533,8 +619,7 @@ class DecisionTreeClassifierWithMultipleLabels(BaseEstimator, ClassifierMixin):
                     }
 
         if best_split is None:
-            label_uniq, label_counts = np.unique(y, return_counts=True)
-            return {"type": "leaf", "class": label_uniq[np.argmax(label_counts)]}
+            return {"type": "leaf", "class": np.argmax(y.sum(axis=0))}
 
         # Recursively build the left and right subtrees
         left_subtree = self._build_tree(
@@ -563,3 +648,156 @@ class DecisionTreeClassifierWithMultipleLabels(BaseEstimator, ClassifierMixin):
             else:
                 node = node["right"]
         return node["class"]
+
+    def score(self, X, y_true):
+        y_pred = self.predict(X)
+
+        # Ratio of predictions that are true, i.e. true positives
+        return y_true[np.arange(y_true.shape[0]), y_pred].mean()
+
+    def unique_leaf_values(self):
+        node = self.tree_
+        to_traverse = [node]
+        values = []
+        while len(to_traverse) > 0:
+            node = to_traverse.pop()
+
+            if node["type"] == "leaf":
+                values.append(node["class"])
+            else:
+                to_traverse.append(node["left"])
+                to_traverse.append(node["right"])
+
+        return len(np.unique(values))
+
+
+# Similar as above but can handle pandas dataframe + categorical columns
+class DecisionTreeClassifierWithMultipleLabelsPandas:
+    def __init__(self, max_depth=None):
+        self.max_depth = max_depth
+
+    def fit(self, X, y):
+        self.n_classes = len(np.unique(y))
+        self.n_features = X.shape[1]
+        self.tree = self._grow_tree(X, y)
+
+    def predict(self, X):
+        return np.array([self._traverse_tree(x, self.tree) for _, x in X.iterrows()])
+
+    def _grow_tree(self, X, y, depth=0):
+        n_labels = len(np.unique(y))
+
+        if (self.max_depth is not None and depth >= self.max_depth) or n_labels == 1:
+            leaf_value = np.argmax(y.sum(axis=0))
+            return {"leaf_value": leaf_value}
+
+        feature_indices = X.columns
+        best_feature, best_threshold = self._best_split(X, y, feature_indices)
+
+        if best_feature is None:
+            leaf_value = np.argmax(y.sum(axis=0))
+            return {"leaf_value": leaf_value}
+
+        if X.dtypes[best_feature] == "object":  # Categorical feature
+            left_indices = X[best_feature] == best_threshold
+            right_indices = X[best_feature] != best_threshold
+        else:  # Numerical feature
+            left_indices = X[best_feature] <= best_threshold
+            right_indices = X[best_feature] > best_threshold
+
+        left_tree = self._grow_tree(X[left_indices], y[left_indices], depth + 1)
+        right_tree = self._grow_tree(X[right_indices], y[right_indices], depth + 1)
+
+        return {
+            "feature": best_feature,
+            "threshold": best_threshold,
+            "left": left_tree,
+            "right": right_tree,
+        }
+
+    def _best_split(self, X, y, feature_names):
+        best_gain = -1
+        best_feature, best_threshold = None, None
+
+        for feature in feature_names:
+            if X.dtypes[feature] == "object":  # Categorical feature
+                thresholds = X[feature].unique()
+            else:  # Numerical feature
+                # thresholds = np.unique(X[feature])
+                thresholds = np.percentile(X[feature], [25, 50, 75])
+
+            for threshold in thresholds:
+                if X.dtypes[feature] == "object":  # Categorical feature
+                    left_indices = X[feature] == threshold
+                    right_indices = X[feature] != threshold
+                else:  # Numerical feature
+                    left_indices = X[feature] <= threshold
+                    right_indices = X[feature] > threshold
+
+                if len(y[left_indices]) > 0 and len(y[right_indices]) > 0:
+                    gain = self._information_gain(y, y[left_indices], y[right_indices])
+                    if gain > best_gain:
+                        best_gain = gain
+                        best_feature = feature
+                        best_threshold = threshold
+
+        return best_feature, best_threshold
+
+    def _information_gain(self, parent, left_child, right_child):
+        weight_left = len(left_child) / len(parent)
+        weight_right = len(right_child) / len(parent)
+        return common_labels_impurity_multiclass(parent) - (
+            weight_left * common_labels_impurity_multiclass(left_child)
+            + weight_right * common_labels_impurity_multiclass(right_child)
+        )
+
+    def _traverse_tree(self, x, node):
+        if "leaf_value" in node:
+            return node["leaf_value"]
+
+        if (
+            pd.api.types.is_categorical_dtype(x[node["feature"]])
+            or x[node["feature"]] == "object"
+        ):
+            if x[node["feature"]] == node["threshold"]:
+                return self._traverse_tree(x, node["left"])
+            else:
+                return self._traverse_tree(x, node["right"])
+        else:
+            if x[node["feature"]] <= node["threshold"]:
+                return self._traverse_tree(x, node["left"])
+            else:
+                return self._traverse_tree(x, node["right"])
+
+    def feature_importance(self):
+        importances = np.zeros(self.n_features)
+
+        def traverse(node, importance):
+            if "feature" in node:
+                importances[node["feature"]] += importance
+                traverse(node["left"], importance / 2)
+                traverse(node["right"], importance / 2)
+
+        traverse(self.tree, 1.0)
+        return pd.Series(importances / np.sum(importances), index=self.feature_names)
+
+    def score(self, X, y_true):
+        y_pred = self.predict(X)
+
+        # Ratio of predictions that are true, i.e. true positives
+        return y_true[np.arange(y_true.shape[0]), y_pred].mean()
+
+    def unique_leaf_values(self):
+        node = self.tree
+        to_traverse = [node]
+        values = []
+        while len(to_traverse) > 0:
+            node = to_traverse.pop()
+
+            if "leaf_value" in node:
+                values.append(node["leaf_value"])
+            else:
+                to_traverse.append(node["left"])
+                to_traverse.append(node["right"])
+
+        return len(np.unique(values))
