@@ -131,9 +131,14 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
         # perf_matrix["rel_size"] = perf_matrix["size"] / perf_matrix["ORIG_SIZE"]  # We have `kbs` which is a better alternative
         # perf_matrix["rel_size"] = np.log(perf_matrix["rel_size"])  # To scale value distribution more evenly
         perf_matrix["rel_kbs"] = perf_matrix["kbs"] / perf_matrix["ORIG_BITRATE"]
+
+        # For fps and kbs higher is better
         perf_matrix["fps"] = -perf_matrix[
             "fps"
-        ]  # fps is the only increasing performance measure
+        ]
+        perf_matrix["kbs"] = -perf_matrix[
+            "kbs"
+        ]
 
     # Drop inputs with constant measurements
     perf_matrix = perf_matrix[
@@ -410,7 +415,7 @@ def pareto_rank_numpy(data, cutoff=None):
     unassigned = np.ones(len(data), dtype=bool)
     ranks = np.zeros(len(data), dtype=np.int32)
     front = 0
-
+    
     if cutoff is not None:
         infeasible = (data > cutoff).any(axis=-1)
         unassigned[infeasible] = False
@@ -434,7 +439,8 @@ def pareto_rank_numpy(data, cutoff=None):
         unassigned[is_efficient] = False
 
     if cutoff is not None:
-        ranks[infeasible] = ranks.max() + 1
+        # ranks[infeasible] = ranks.max() + 1
+        ranks[infeasible] = len(data) + 1
 
     return ranks
 

@@ -4,7 +4,7 @@ import numpy as np
 import plotnine as p9
 from scipy import stats
 from sklearn.ensemble import RandomForestClassifier
-from common import load_data, pareto_rank, DecisionTreeClassifierWithMultipleLabels
+from common import baseline_results, load_data, pareto_rank, DecisionTreeClassifierWithMultipleLabels
 import json
 from pathlib import Path
 
@@ -13,19 +13,19 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.tree import DecisionTreeClassifier
 
 # %%
-data_dir = Path("../data")
+data_dir = Path("./data")
 random_state = 1234
 test_size = 0.2
-pareto_cutoff = 0.2
+pareto_cutoff = 0.6
 rank_by_domination_count = False
 # classifier = "customdt"  # "dt", "rf"
 
-num_performances = -1  # -1: all performances (increasing)
+num_performances = -1  # -1: all performances / takes first n if > 0
 
 systems = json.load(open(data_dir / "metadata.json")).keys()
 
 front_ratio = []
-baseline_results = []
+result_list = []
 
 for s in systems:
     (
@@ -35,10 +35,11 @@ for s in systems:
         all_performances_initial,
         input_preprocessor,
         config_preprocessor,
-    ) = load_data(system=s, data_dir="../data")
+    ) = load_data(system=s, data_dir=data_dir)
 
     for num_p in range(1, max(num_performances, len(all_performances_initial)) + 1):
         all_performances = all_performances_initial[:num_p]
+        # all_performances = ["kbs"]
 
         # Normalization is needed for the Pareto cutoff
         # We can normalize before splitting, because
@@ -208,8 +209,8 @@ for s in systems:
 
             for i in range(1, X.shape[1]):
                 print(i)
-                clf = DecisionTreeClassifierWithMultipleLabels(max_depth=i, random_state=random_state)
-                # clf = RandomForestClassifier(n_estimators=10, max_depth=i)
+                # clf = DecisionTreeClassifierWithMultipleLabels(max_depth=i, random_state=random_state)
+                clf = RandomForestClassifier(n_estimators=10, max_depth=i)
                 clf.fit(X_train, y_train)
                 val_score = clf.score(X_val, y_val)
                 print("Scores", clf.score(X_train, y_train), val_score)
@@ -231,10 +232,10 @@ for s in systems:
                     best_depth = i
 
             print(f"Best depth {best_depth} ({best_val_rank})")
-            clf = DecisionTreeClassifierWithMultipleLabels(
-                max_depth=best_depth, random_state=random_state
-            )
-            # clf = RandomForestClassifier(n_estimators=10, max_depth=best_depth, random_state=random_state)
+            # clf = DecisionTreeClassifierWithMultipleLabels(
+            #     max_depth=best_depth, random_state=random_state
+            # )
+            clf = RandomForestClassifier(n_estimators=10, max_depth=best_depth, random_state=random_state)
             clf.fit(X, y)
 
             X_test = input_preprocessor.transform(
@@ -254,82 +255,32 @@ for s in systems:
             )
 
             ## These are our evaluation baselines
-            # The best configuration by averaging the ranks over all inputs
-            best_cfg_id_overall = (
-                icm[["ranks"]].groupby("configurationID").mean().idxmin().item()
-            )
-
-            # The best configuration per performance metric
-            best_cfg_id_per_metric = (
-                icm_ranked_measures.groupby("configurationID").mean().idxmin()
-            )
-
-            # The most common configuration in the Pareto fronts
-            most_common_cfg_id = (
-                dataset[["configurationID"] + [config_features.columns[0]]]
-                .groupby(["configurationID"], as_index=False)
-                .count()
-                .sort_values(by=config_features.columns[0], ascending=False)
-                .iloc[0]
-                .configurationID
-            )
-
-            overall_ranks = icm_test.query(
-                "configurationID == @best_cfg_id_overall"
-            ).ranks
-            print(
-                f"Average rank of the overall best configuration: {overall_ranks.mean():.2f}+-{overall_ranks.std():.2f}"
-            )
-
-            for p in all_performances:
-                cfg_id = best_cfg_id_per_metric[p]
-                metric_p = icm_test.query("configurationID == @cfg_id").ranks
-                print(
-                    f"Average rank of the best configuration for {p}: {metric_p.mean():.2f}+-{metric_p.std():.2f}"
-                )
-
-            metric_rank = icm_test.query(
-                "configurationID.isin(@best_cfg_id_per_metric.values)"
-            ).ranks
-            print(
-                f"Average rank of the best configuration for all metrics: {metric_rank.mean():.2f}+-{metric_rank.std():.2f}"
-            )
-
-            common_rank = icm_test.query("configurationID == @most_common_cfg_id").ranks
-            print(
-                f"Average rank of the most common configuration: {common_rank.mean():.2f}+-{common_rank.std():.2f}"
-            )
-
-            # TODO Not sure std. dev. is correct here. We sample all random configs at once.
-            random_ranks = np.random.randint(0, test_perf.configurationID.max(), 10) + 1
-            random_rank = icm_test.query("configurationID.isin(@random_ranks)").ranks
-            print(
-                f"Average rank of random configuration: {random_rank.mean():.2f}+-{random_rank.std():.2f}"
-            )
-
-            baseline_results.append(
+            # Baseline results
+            baseline = baseline_results(icm, icm_ranked_measures, icm_test, dataset, config_features, verbose=True)
+            
+            result_list.append(
                 (
                     s,
                     split_idx,
-                    len(selected_configs),
+                    clf.unique_leaf_values(),
                     num_p,
                     sdc_ranks.mean(),
                     sdc_ranks.std(),
-                    overall_ranks.mean(),
-                    overall_ranks.std(),
-                    metric_rank.mean(),
-                    metric_rank.std(),
-                    common_rank.mean(),
-                    common_rank.std(),
-                    random_rank.mean(),
-                    random_rank.std(),
+                    baseline["overall"][0],
+                    baseline["overall"][1],
+                    baseline["metric"][0],
+                    baseline["metric"][1],
+                    baseline["common"][0],
+                    baseline["common"][1],
+                    baseline["random"][0],
+                    baseline["random"][1],
                 )
             )
 
         print("")
 
 baseline_df = pd.DataFrame(
-    baseline_results,
+    result_list,
     columns=[
         "system",
         "split",

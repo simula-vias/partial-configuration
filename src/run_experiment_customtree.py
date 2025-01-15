@@ -6,6 +6,7 @@ from scipy import stats
 from common import (
     load_data,
     pareto_rank,
+    baseline_results,
     DecisionTreeClassifierWithMultipleLabels,
     DecisionTreeClassifierWithMultipleLabelsPandas,
 )
@@ -16,10 +17,10 @@ from sklearn.model_selection import KFold, train_test_split
 from sklearn.preprocessing import LabelEncoder, MultiLabelBinarizer
 
 # %%
-data_dir = Path("../data")
+data_dir = Path("./data")
 random_state = 1234
 test_size = 0.2
-pareto_cutoff = 0.2
+pareto_cutoff = 0.6
 rank_by_domination_count = False
 # classifier = "customdt"  # "dt", "rf"
 
@@ -28,7 +29,7 @@ num_performances = -1  # -1: all performances (increasing)
 systems = json.load(open(data_dir / "metadata.json")).keys()
 
 front_ratio = []
-baseline_results = []
+result_list = []
 
 for s in systems:
     (
@@ -38,7 +39,7 @@ for s in systems:
         all_performances_initial,
         input_preprocessor,
         config_preprocessor,
-    ) = load_data(system=s, data_dir="../data")
+    ) = load_data(system=s, data_dir=data_dir)
 
     for num_p in range(1, max(num_performances, len(all_performances_initial)) + 1):
         all_performances = all_performances_initial[:num_p]
@@ -138,6 +139,9 @@ for s in systems:
                 .join(input_features)
                 .reset_index()
             )
+            # Filtering by the rank might exclude some training inputs
+            # Update the train_inp accordingly
+            train_inp = np.array([ti for ti in train_inp if ti in dataset.inputname.unique()])
 
             # Calculate the Pareto ranks for the test data
             icm_test = (
@@ -154,15 +158,6 @@ for s in systems:
             )
 
             ## HERE GOES SDC
-            cfg_columns = ["configurationID"] + list(config_features.columns)
-            top_cfgs = (
-                dataset[cfg_columns + ["inputname"]]
-                .groupby(cfg_columns, dropna=False, as_index=False)
-                .count()
-                .sort_values("inputname", ascending=False)
-                .configurationID.tolist()
-            )
-
             enc = LabelEncoder()
             enc.fit(dataset["configurationID"].tolist())
 
@@ -189,6 +184,7 @@ for s in systems:
                     input_features.index.get_level_values("inputname").isin(train_inp)
                 ].sort_index()
             y = binary_df.values
+            assert X.shape[0] == y.shape[0], "X and y don't match"
 
             # TODO Cross-validation
 
@@ -259,60 +255,10 @@ for s in systems:
             )
 
             ## These are our evaluation baselines
-            # The best configuration by averaging the ranks over all inputs
-            best_cfg_id_overall = (
-                icm[["ranks"]].groupby("configurationID").mean().idxmin().item()
-            )
-
-            # The best configuration per performance metric
-            best_cfg_id_per_metric = (
-                icm_ranked_measures.groupby("configurationID").mean().idxmin()
-            )
-
-            # The most common configuration in the Pareto fronts
-            most_common_cfg_id = (
-                dataset[["configurationID"] + [config_features.columns[0]]]
-                .groupby(["configurationID"], as_index=False)
-                .count()
-                .sort_values(by=config_features.columns[0], ascending=False)
-                .iloc[0]
-                .configurationID
-            )
-
-            overall_ranks = icm_test.query(
-                "configurationID == @best_cfg_id_overall"
-            ).ranks
-            print(
-                f"Average rank of the overall best configuration: {overall_ranks.mean():.2f}+-{overall_ranks.std():.2f}"
-            )
-
-            for p in all_performances:
-                cfg_id = best_cfg_id_per_metric[p]
-                metric_p = icm_test.query("configurationID == @cfg_id").ranks
-                print(
-                    f"Average rank of the best configuration for {p}: {metric_p.mean():.2f}+-{metric_p.std():.2f}"
-                )
-
-            metric_rank = icm_test.query(
-                "configurationID.isin(@best_cfg_id_per_metric.values)"
-            ).ranks
-            print(
-                f"Average rank of the best configuration for all metrics: {metric_rank.mean():.2f}+-{metric_rank.std():.2f}"
-            )
-
-            common_rank = icm_test.query("configurationID == @most_common_cfg_id").ranks
-            print(
-                f"Average rank of the most common configuration: {common_rank.mean():.2f}+-{common_rank.std():.2f}"
-            )
-
-            # TODO Not sure std. dev. is correct here. We sample all random configs at once.
-            random_ranks = np.random.randint(0, test_perf.configurationID.max(), 10) + 1
-            random_rank = icm_test.query("configurationID.isin(@random_ranks)").ranks
-            print(
-                f"Average rank of random configuration: {random_rank.mean():.2f}+-{random_rank.std():.2f}"
-            )
-
-            baseline_results.append(
+            # Baseline results
+            baseline = baseline_results(icm, icm_ranked_measures, icm_test, dataset, config_features, verbose=True)
+            
+            result_list.append(
                 (
                     s,
                     split_idx,
@@ -320,21 +266,21 @@ for s in systems:
                     num_p,
                     sdc_ranks.mean(),
                     sdc_ranks.std(),
-                    overall_ranks.mean(),
-                    overall_ranks.std(),
-                    metric_rank.mean(),
-                    metric_rank.std(),
-                    common_rank.mean(),
-                    common_rank.std(),
-                    random_rank.mean(),
-                    random_rank.std(),
+                    baseline["overall"][0],
+                    baseline["overall"][1],
+                    baseline["metric"][0],
+                    baseline["metric"][1],
+                    baseline["common"][0],
+                    baseline["common"][1],
+                    baseline["random"][0],
+                    baseline["random"][1],
                 )
             )
 
         print("")
 
-baseline_df = pd.DataFrame(
-    baseline_results,
+result_df = pd.DataFrame(
+    result_list,
     columns=[
         "system",
         "split",
@@ -352,17 +298,17 @@ baseline_df = pd.DataFrame(
         "random_std",
     ],
 )
-baseline_df.to_csv("../results/baselines.csv", index=False)
+result_df.to_csv("../results/results.csv", index=False)
 
 # %%
-## Print baseline table in latex
-baselines = ["sdc", "overall", "metric", "common", "random"]
-print("System & |P| &" + " & ".join(map(lambda s: s.capitalize(), baselines)) + "\\\\")
-for (r, p), v in baseline_df.groupby(["system", "num_performances"]).mean().iterrows():
+## Print result table in latex
+methods = ["sdc", "overall", "metric", "common", "random"]
+print("System & |P| &" + " & ".join(map(lambda s: s.capitalize(), methods)) + "\\\\")
+for (r, p), v in result_df.groupby(["system", "num_performances"]).mean().iterrows():
     res = " & ".join(
         [
             "${avg:.2f}\\pm{std:.2f}$".format(avg=v[f"{b}_avg"], std=v[f"{b}_std"])
-            for b in baselines
+            for b in methods
         ]
     )
     print(f"{r} & {p} & {res} \\\\")
@@ -376,7 +322,7 @@ import pandas as pd
 # Assuming your dataframe is named 'df'
 # If not, replace 'df' with the actual name of your dataframe
 
-df_aggregated = baseline_df.groupby(['system', 'num_performances']).agg({
+df_aggregated = result_df.groupby(['system', 'num_performances']).agg({
     'sdc_avg': 'mean',
     'sdc_std': 'mean',  # Taking mean of standard deviations
     'overall_avg': 'mean',
