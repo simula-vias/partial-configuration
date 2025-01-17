@@ -139,6 +139,11 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
         perf_matrix["kbs"] = -perf_matrix[
             "kbs"
         ]
+        # if kbs is supposed to be higher, than size must be too
+        del perf_matrix["size"]
+        del performances[performances.index("size")]
+        # perf_matrix["size"] = -perf_matrix["size"]
+        # perf_matrix["worst_case_performance"] = perf_matrix[performances].max(axis=1)
 
     # Drop inputs with constant measurements
     perf_matrix = perf_matrix[
@@ -548,6 +553,96 @@ def baseline_results(
         )
 
     results = {}
+    results["overall"] = [overall_ranks.mean(), overall_ranks.std()]
+    results["metric"] = [metric_ranks.mean(), metric_ranks.std()]
+    results["common"] = [common_ranks.mean(), common_ranks.std()]
+    results["random"] = [random_ranks.mean(), random_ranks.std()]
+
+    return results
+
+
+def baseline_results_wc(
+    icm,
+    icm_ranked_measures,
+    icm_test,
+    dataset,
+    config_features,
+    verbose=False,
+):
+    ## These are our evaluation baselines
+    # Overall: The best configuration by averaging the ranks over all inputs
+    best_cfg_id_overall = (
+        icm[["ranks"]].groupby("configurationID").mean().idxmin().item()
+    )
+
+    # Metric: The best configuration per performance metric
+    best_cfg_id_per_metric = (
+        icm_ranked_measures.groupby("configurationID").mean().idxmin()
+    )
+
+    # Common: The most common configuration in the Pareto fronts
+    most_common_cfg_id = (
+        dataset[["configurationID"] + [config_features.columns[0]]]
+        .groupby(["configurationID"], as_index=False)
+        .count()
+        .sort_values(by=config_features.columns[0], ascending=False)
+        .iloc[0]
+        .configurationID
+    )
+
+    num_test_inputs = icm_test.index.get_level_values(0).nunique()
+
+    overall_ranks = icm_test.query("configurationID == @best_cfg_id_overall")["worst_case_performance"]
+    assert (
+        overall_ranks.shape[0] == num_test_inputs
+    ), "Not all inputs are covered by the overall configurations"
+
+    metric_ranks = (
+        icm_test.query("configurationID.isin(@best_cfg_id_per_metric.values)")
+        .groupby("inputname")
+        .mean()["worst_case_performance"]
+    )
+    assert (
+        metric_ranks.shape[0] == num_test_inputs
+    ), "Not all inputs are covered by the metric configurations"
+
+    common_ranks = icm_test.query("configurationID == @most_common_cfg_id")["worst_case_performance"]
+    assert (
+        common_ranks.shape[0] == num_test_inputs
+    ), "Not all inputs are covered by the most common configuration"
+
+    best_wcp = icm_test.groupby("inputname")["worst_case_performance"].min() #.mean()
+    avg_wcp = icm_test.groupby("inputname")["worst_case_performance"].mean() #.mean()
+
+
+    # TODO Not sure std. dev. is correct here. We sample all random configs at once.
+    max_config_id = icm.index.get_level_values(1).max()
+    random_configs = np.random.randint(0, max_config_id, 10) + 1
+    random_ranks = icm_test.query("configurationID.isin(@random_configs)")["worst_case_performance"]
+
+    if verbose:
+        print(
+            f"Best WCP per input: {best_wcp.mean():.2f}+-{best_wcp.std():.2f}"
+        )
+        print(
+            f"Average WCP per input: {avg_wcp.mean():.2f}+-{avg_wcp.std():.2f}"
+        )
+        print(
+            f"Average WCP of the overall best configuration: {overall_ranks.mean():.2f}+-{overall_ranks.std():.2f}"
+        )
+        print(
+            f"Average WCP of the most common configuration: {common_ranks.mean():.2f}+-{common_ranks.std():.2f}"
+        )
+        print(
+            f"Average WCP of the best configuration for all metrics: {metric_ranks.mean():.2f}+-{metric_ranks.std():.2f}"
+        )
+        print(
+            f"Average WCP of random configuration: {random_ranks.mean():.2f}+-{random_ranks.std():.2f}"
+        )
+
+    results = {}
+    results["best"] = [best_wcp.mean(), best_wcp.std()]
+    results["average"] = [avg_wcp.mean(), avg_wcp.std()]
     results["overall"] = [overall_ranks.mean(), overall_ranks.std()]
     results["metric"] = [metric_ranks.mean(), metric_ranks.std()]
     results["common"] = [common_ranks.mean(), common_ranks.std()]
