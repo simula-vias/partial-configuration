@@ -43,7 +43,7 @@ for s in systems:
     for num_p in range(1, len(all_performances_initial) + 1):
         # TODO Do we want to consider all subsets of the performances?
         # all_perf_list.append(all_performances_initial[:num_p])
-        all_perf_list.extend(list(map(list, itertools.combinations(all_performances_initial, num_p))))
+        all_perf_list.extend(list(map(list,itertools.combinations(all_performances_initial, num_p))))
 
     for all_performances in all_perf_list:
         num_p = len(all_performances)
