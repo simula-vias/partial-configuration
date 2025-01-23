@@ -41,7 +41,7 @@ for s in systems:
     all_perf_list = [[ap] for ap in all_performances_initial]
 
     for num_p in range(1, len(all_performances_initial) + 1):
-        if s == "sqlite":
+        if True or s == "sqlite":
             # sqlite has too many performance measures
             all_perf_list.append(all_performances_initial[:num_p])
         else:
@@ -200,35 +200,33 @@ for s in systems:
             best_val_rank = 100_000
             best_depth = 0
 
-            # for i in range(1, X.shape[1]):
-            #     print(i)
-            #     # clf = DecisionTreeClassifierWithMultipleLabels(max_depth=i, random_state=random_state)
-            #     clf = RandomForestClassifier(n_estimators=10, max_depth=i)
-            #     clf.fit(X_train, y_train)
-            #     val_score = clf.score(X_val, y_val)
-            #     print("Scores", clf.score(X_train, y_train), val_score)
+            for i in range(1, X.shape[1]):
+                # print(i)
+                # clf = DecisionTreeClassifierWithMultipleLabels(max_depth=i, random_state=random_state)
+                # clf = RandomForestClassifier(n_estimators=10, max_depth=i)
+                clf = DecisionTreeClassifier(max_depth=i, random_state=random_state)
+                clf.fit(X_train, y_train)
 
-            #     # Validation test
-            #     pred_cfg_lbl = clf.predict(X_val)
-            #     pred_cfg = enc.inverse_transform(pred_cfg_lbl).astype(int)
-            #     inp_pred_map = pd.DataFrame(
-            #         zip(inputnames_val, pred_cfg),
-            #         columns=["inputname", "configurationID"],
-            #     )
-            #     val_rank = icm.merge(inp_pred_map, on=["inputname", "configurationID"])[
-            #         "ranks"
-            #     ].mean()
-            #     print("Val rank", val_rank)
+                # Validation test
+                pred_cfg_lbl = clf.predict(X_val)
+                pred_cfg = enc.inverse_transform(pred_cfg_lbl).astype(int)
+                inp_pred_map = pd.DataFrame(
+                    zip(inputnames_val, pred_cfg),
+                    columns=["inputname", "configurationID"],
+                )
+                val_rank = icm.merge(inp_pred_map, on=["inputname", "configurationID"])[
+                    "worst_case_performance"
+                ].mean()
 
-            #     if val_rank < best_val_rank:
-            #         best_val_rank = val_rank
-            #         best_depth = i
+                if val_rank < best_val_rank:
+                    best_val_rank = val_rank
+                    best_depth = i
 
-            # print(f"Best depth {best_depth} ({best_val_rank})")
+            print(f"Best depth {best_depth} ({best_val_rank})")
             # clf = DecisionTreeClassifierWithMultipleLabels(
             #     max_depth=best_depth, random_state=random_state
             # )
-            clf = RandomForestClassifier(n_estimators=10, random_state=random_state)
+            # clf = RandomForestClassifier(n_estimators=10, random_state=random_state)
             clf.fit(X, y)
 
             X_test = input_preprocessor.transform(
@@ -252,6 +250,7 @@ for s in systems:
                     0, #clf.unique_leaf_values(),
                     num_p,
                     "-".join(all_performances),
+                    best_depth,
                     sdc_wcp.mean(),
                     sdc_wcp.std(),
                     baseline["best"][0],
@@ -279,6 +278,7 @@ baseline_df = pd.DataFrame(
         "configs",
         "num_performances",
         "performances",
+        "tree_depth",
         "sdc_avg",
         "sdc_std",
         "best_avg",
@@ -295,7 +295,7 @@ baseline_df = pd.DataFrame(
         "random_std",
     ],
 )
-baseline_df.to_csv("../results/baselines.csv", index=False)
+baseline_df.to_csv("results/wcp_1cfg.csv", index=False)
 
 # %%
 ## Print baseline table in latex

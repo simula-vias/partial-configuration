@@ -166,14 +166,36 @@ for s in systems:
                 .configurationID.tolist()
             )
 
-            input_labels = (
-                icm.reset_index().groupby('inputname')
-                .apply(lambda x: x.loc[x['worst_case_performance'].idxmin()], include_groups=False)
-                # .set_index("inputname")
-            )["configurationID"].astype(int)
-
             enc = LabelEncoder()
-            y = enc.fit_transform(input_labels)
+            enc.fit(perf_matrix["configurationID"].tolist())
+
+            # This is the largest minimal WCP over all inputs
+            # If we set a general threshold it must be at least this high, otherwise we exclude inputs
+            min_wc_perf_threshold = perf_matrix[["inputname", "worst_case_performance"]].groupby("inputname").min().max().item()
+            wc_perf_threshold = 0.05
+
+            is_below_threshold = perf_matrix[perf_matrix["worst_case_performance"] < wc_perf_threshold].inputname.unique()
+            all_above_threshold = set(perf_matrix[perf_matrix["worst_case_performance"] >= wc_perf_threshold].inputname.unique()) - set(is_below_threshold)
+
+            # We find the best configurations per input
+            dataset_below = (
+                perf_matrix[perf_matrix["worst_case_performance"] < wc_perf_threshold].groupby('inputname')["configurationID"].apply(enc.transform)
+            )
+            dataset_above = (
+                perf_matrix[perf_matrix.inputname.isin(all_above_threshold)].groupby('inputname')
+                .apply(lambda x: x.loc[x['worst_case_performance'].idxmin()], include_groups=False)["configurationID"].apply(lambda x: enc.transform([x]))
+            )
+
+            # TODO Prepare correct input labels and y vector for multi-cfg case
+            input_labels = pd.concat([dataset_below, dataset_above]).sort_index()["configurationID"].astype(int)
+            # input_labels = (
+            #     icm.reset_index().groupby('inputname')
+            #     .apply(lambda x: x.loc[x['worst_case_performance'].idxmin()], include_groups=False)
+            #     # .set_index("inputname")
+            # )["configurationID"].astype(int)
+
+            # enc = LabelEncoder()
+            # y = enc.fit_transform(input_labels)
 
             X = input_preprocessor.fit_transform(
                 input_features.query("inputname.isin(@input_labels.index)")
@@ -225,10 +247,11 @@ for s in systems:
             #         best_depth = i
 
             # print(f"Best depth {best_depth} ({best_val_rank})")
-            # clf = DecisionTreeClassifierWithMultipleLabels(
-            #     max_depth=best_depth, random_state=random_state
-            # )
-            clf = RandomForestClassifier(n_estimators=10, random_state=random_state)
+            best_depth = X.shape[1]
+            clf = DecisionTreeClassifierWithMultipleLabels(
+                max_depth=best_depth, random_state=random_state
+            )
+            # clf = RandomForestClassifier(n_estimators=10, random_state=random_state)
             clf.fit(X, y)
 
             X_test = input_preprocessor.transform(
@@ -295,7 +318,7 @@ baseline_df = pd.DataFrame(
         "random_std",
     ],
 )
-baseline_df.to_csv("../results/baselines.csv", index=False)
+baseline_df.to_csv("results/wcp_multi_cfg.csv", index=False)
 
 # %%
 ## Print baseline table in latex
