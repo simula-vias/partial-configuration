@@ -10,7 +10,7 @@ from pathlib import Path
 import itertools
 
 from sklearn.model_selection import KFold, train_test_split
-from sklearn.preprocessing import LabelEncoder, MultiLabelBinarizer
+from sklearn.preprocessing import LabelEncoder
 from sklearn.tree import DecisionTreeClassifier
 
 # %%
@@ -23,7 +23,7 @@ rank_by_domination_count = False
 
 num_performances = -1  # -1: all performances / takes first n if > 0
 
-systems = ["xz"] # json.load(open(data_dir / "metadata.json")).keys()
+systems = json.load(open(data_dir / "metadata.json")).keys()
 
 front_ratio = []
 result_list = []
@@ -41,11 +41,9 @@ for s in systems:
     all_perf_list = [[ap] for ap in all_performances_initial]
 
     for num_p in range(1, len(all_performances_initial) + 1):
-        if s == "sqlite":
-            # sqlite has too many performance measures
-            all_perf_list.append(all_performances_initial[:num_p])
-        else:
-            all_perf_list.extend(list(map(list, itertools.combinations(all_performances_initial, num_p))))
+        # TODO Do we want to consider all subsets of the performances?
+        all_perf_list.append(all_performances_initial[:num_p])
+        # all_perf_list.extend(list(map(list, itertools.combinations(all_performances_initial, num_p))))
 
     for all_performances in all_perf_list:
         num_p = len(all_performances)
@@ -75,12 +73,6 @@ for s in systems:
             right_index=True,
         )
         perf_matrix["feasible"] = cutoff_mask
-        # We adjust the WCP by expressing it as the difference from the best WCP, i.e. the best WCP is always 0
-        perf_matrix["worst_case_performance"] = (  # worst_case_performance_adjusted
-            perf_matrix[["inputname", "worst_case_performance"]]
-            .groupby("inputname", as_index=True)
-            .transform(lambda x: x - x.min())
-        )
 
         all_perf_raw = [f"{p}_raw" for p in all_performances]
         all_perf_norm = [f"{p}" for p in all_performances]
@@ -166,49 +158,25 @@ for s in systems:
                 .configurationID.tolist()
             )
 
+            ## Here we select the configurations by decreasing coverage
+            # If a configuration adds new items, we add it.
+            # We repeat until all inputs are covered.
+
+            # TODO We do not need this for the custom decision tree model
+            # TODO We should also explore alternatives for the normal decision tree model
+
+            input_labels = (
+                icm.reset_index().groupby('inputname')
+                .apply(lambda x: x.loc[x['worst_case_performance'].idxmin()], include_groups=False)
+                # .set_index("inputname")
+            )["configurationID"].astype(int)
+
             enc = LabelEncoder()
-            enc.fit(perf_matrix["configurationID"].tolist())
-
-            # This is the largest minimal WCP over all inputs
-            # If we set a general threshold it must be at least this high, otherwise we exclude inputs
-            min_wc_perf_threshold = perf_matrix[["inputname", "worst_case_performance"]].groupby("inputname").min().max().item()
-            wc_perf_threshold = 0.03
-
-            is_below_threshold = perf_matrix[perf_matrix["worst_case_performance"] < wc_perf_threshold].inputname.unique()
-            all_above_threshold = set(perf_matrix[perf_matrix["worst_case_performance"] >= wc_perf_threshold].inputname.unique()) - set(is_below_threshold)
-
-            # We find the best configurations per input
-            dataset_below = (
-                perf_matrix[perf_matrix["worst_case_performance"] < wc_perf_threshold].groupby('inputname')["configurationID"].apply(enc.transform)
-            )
-            dataset_above = (
-                perf_matrix[perf_matrix.inputname.isin(all_above_threshold)].groupby('inputname')
-                .apply(lambda x: x.loc[x['worst_case_performance'].idxmin()], include_groups=False)["configurationID"].apply(lambda x: enc.transform([x]))
-            )
-
-            # TODO Prepare correct input labels and y vector for multi-cfg case
-            input_labels = pd.concat([dataset_below, dataset_above]).sort_index()
-            # input_labels = (
-            #     icm.reset_index().groupby('inputname')
-            #     .apply(lambda x: x.loc[x['worst_case_performance'].idxmin()], include_groups=False)
-            #     # .set_index("inputname")
-            # )["configurationID"].astype(int)
-
-            # enc = LabelEncoder()
-            # y = enc.fit_transform(input_labels)
-
-            mlb = MultiLabelBinarizer()
-            binary_matrix = mlb.fit_transform(input_labels)
-
-            # Create a new DataFrame with the binary matrix
-            binary_df = pd.DataFrame(
-                binary_matrix, columns=mlb.classes_, index=input_labels.index
-            )
+            y = enc.fit_transform(input_labels)
 
             X = input_preprocessor.fit_transform(
                 input_features.query("inputname.isin(@input_labels.index)")
             )
-            y = binary_df.values
 
             # TODO Cross-validation
             # TODO Is decision tree the best model for the final prediction?
@@ -228,45 +196,45 @@ for s in systems:
             # y_val = y
             # inputnames_val = input_labels.index
 
-            best_val_wcp = 100_000
+            best_val_rank = 100_000
             best_depth = 0
 
-            for i in range(1, X.shape[1]):
-                print(i)
-                clf = DecisionTreeClassifierWithMultipleLabels(max_depth=i, random_state=random_state)
-                # clf = RandomForestClassifier(n_estimators=10, max_depth=i)
-                clf.fit(X_train, y_train)
-                val_score = clf.score(X_val, y_val)
-                print("Scores", clf.score(X_train, y_train), val_score)
+            # for i in range(1, X.shape[1]):
+            #     print(i)
+            #     # clf = DecisionTreeClassifierWithMultipleLabels(max_depth=i, random_state=random_state)
+            #     clf = RandomForestClassifier(n_estimators=10, max_depth=i)
+            #     clf.fit(X_train, y_train)
+            #     val_score = clf.score(X_val, y_val)
+            #     print("Scores", clf.score(X_train, y_train), val_score)
 
-                # Validation test
-                pred_cfg_lbl = clf.predict(X_val)
-                pred_cfg = enc.inverse_transform(pred_cfg_lbl).astype(int)
-                inp_pred_map = pd.DataFrame(
-                    zip(inputnames_val, pred_cfg),
-                    columns=["inputname", "configurationID"],
-                )
-                val_wcp = icm.merge(inp_pred_map, on=["inputname", "configurationID"])[
-                    "worst_case_performance"
-                ].mean()
-                # print("Val wcp", val_wcp)
+            #     # Validation test
+            #     pred_cfg_lbl = clf.predict(X_val)
+            #     pred_cfg = enc.inverse_transform(pred_cfg_lbl).astype(int)
+            #     inp_pred_map = pd.DataFrame(
+            #         zip(inputnames_val, pred_cfg),
+            #         columns=["inputname", "configurationID"],
+            #     )
+            #     val_rank = icm.merge(inp_pred_map, on=["inputname", "configurationID"])[
+            #         "ranks"
+            #     ].mean()
+            #     print("Val rank", val_rank)
 
-                if val_wcp < best_val_wcp:
-                    best_val_wcp = val_wcp
-                    best_depth = i
+            #     if val_rank < best_val_rank:
+            #         best_val_rank = val_rank
+            #         best_depth = i
 
-            print(f"Best depth {best_depth} ({best_val_wcp})")
-            # best_depth = X.shape[1]
-            clf = DecisionTreeClassifierWithMultipleLabels(
-                max_depth=best_depth, random_state=random_state
-            )
-            # clf = RandomForestClassifier(n_estimators=10, random_state=random_state)
+            # print(f"Best depth {best_depth} ({best_val_rank})")
+            # clf = DecisionTreeClassifierWithMultipleLabels(
+            #     max_depth=best_depth, random_state=random_state
+            # )
+            clf = RandomForestClassifier(n_estimators=10, random_state=random_state)
             clf.fit(X, y)
 
             X_test = input_preprocessor.transform(
                 input_features.query("inputname.isin(@test_inp)")
             )
             pred_cfg = enc.inverse_transform(clf.predict(X_test)).astype(int)
+
 
             sdc_wcp = eval_prediction(pred_cfg)
             print(
@@ -294,6 +262,8 @@ for s in systems:
                     baseline["overall"][1],
                     baseline["metric"][0],
                     baseline["metric"][1],
+                    baseline["common"][0],
+                    baseline["common"][1],
                 )
             )
 
@@ -311,20 +281,21 @@ baseline_df = pd.DataFrame(
         "sdc_std",
         "best_avg",
         "best_std",
-        "best_num_configs",
         "average_avg",
         "average_std",
         "overall_avg",
         "overall_std",
         "metric_avg",
         "metric_std",
+        "common_avg",
+        "common_std",
     ],
 )
-baseline_df.to_csv("../results/wcp_multi_cfg.csv", index=False)
+baseline_df.to_csv("../results/baselines.csv", index=False)
 
 # %%
 ## Print baseline table in latex
-baselines = ["sdc", "overall", "metric", "average", "best"]
+baselines = ["sdc", "overall", "metric", "common", "average", "best"]
 print("System & |P| &" + " & ".join(map(lambda s: s.capitalize(), baselines)) + "\\\\\\midrule")
 for (r, p, pn), v in baseline_df.groupby(["system", "num_performances", "performances"]).mean().iterrows():
     res = " & ".join(
@@ -338,4 +309,3 @@ for (r, p, pn), v in baseline_df.groupby(["system", "num_performances", "perform
     print(f"{r} & {p} & {res} \\\\")
 
 # %%
-
