@@ -14,7 +14,7 @@ from pathlib import Path
 import itertools
 
 from sklearn.model_selection import KFold, train_test_split
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, scale
 from sklearn.tree import DecisionTreeClassifier
 
 # %%
@@ -55,16 +55,17 @@ for s in systems:
         # We can normalize before splitting, because
         # we normalize per input and we also split per input.
         # There is no data leakage.
-        normalized_metrics = (
-            perf_matrix_initial[["inputname"] + all_performances]
-            .groupby("inputname", as_index=False)
-            .transform(lambda x: (x - x.min()) / (x.max() - x.min()))
-        )
+        # normalized_metrics = (
+        #     perf_matrix_initial[["inputname"] + all_performances]
+        #     .groupby("inputname", as_index=False)
+        #     .transform(lambda x: (x - x.min()) / (x.max() - x.min()))
+        # )
 
         nmdf = (
             perf_matrix_initial[["inputname"] + all_performances]
             .groupby("inputname", as_index=True)
             .transform(lambda x: (x - x.min()) / (x.max() - x.min()))
+            # .transform(lambda x: scale(x))
         )
         nmdf["worst_case_performance"] = nmdf[all_performances].max(axis=1)
         perf_matrix = pd.merge(
