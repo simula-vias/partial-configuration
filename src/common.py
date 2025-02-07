@@ -643,13 +643,24 @@ def baseline_results_wc(
             f"Average WCP of the best configuration for all metrics: {metric_ranks.mean():.2f}+-{metric_ranks.std():.2f}"
         )
 
-    results = {}
-    results["best"] = [best_wcp.mean(), best_wcp.std()]
-    results["best_num_configs"] = num_configs_for_best
-    results["average"] = [avg_wcp.mean(), avg_wcp.std()]
-    results["overall"] = [overall_ranks.mean(), overall_ranks.std()]
-    results["metric"] = [metric_ranks.mean(), metric_ranks.std()]
-    results["common"] = [common_ranks.mean(), common_ranks.std()]
+    results = {
+        "best_avg": best_wcp.mean(),
+        "best_std": best_wcp.std(),
+        "best_max": best_wcp.max(),
+        "best_num_configs": num_configs_for_best,
+        "average_avg": avg_wcp.mean(),
+        "average_std": avg_wcp.std(),
+        "average_max": avg_wcp.max(),
+        "overall_avg": overall_ranks.mean(),
+        "overall_std": overall_ranks.std(),
+        "overall_max": overall_ranks.max(),
+        "metric_avg": metric_ranks.mean(),
+        "metric_std": metric_ranks.std(),
+        "metric_max": metric_ranks.max(),
+        "common_avg": common_ranks.mean(),
+        "common_std": common_ranks.std(),
+        "common_max": common_ranks.max(),
+    }
 
     return results
 

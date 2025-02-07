@@ -13,7 +13,12 @@ import json
 from pathlib import Path
 import itertools
 
-from sklearn.model_selection import KFold, train_test_split
+from sklearn.model_selection import (
+    GridSearchCV,
+    KFold,
+    cross_val_score,
+    train_test_split,
+)
 from sklearn.preprocessing import LabelEncoder, scale
 from sklearn.tree import DecisionTreeClassifier
 
@@ -22,13 +27,12 @@ data_dir = Path("../data")
 random_state = 1234
 classifier = "rf"  # "dt", "rf"
 
-num_performances = -1  # -1: all performances / takes first n if > 0
-
 systems = json.load(open(data_dir / "metadata.json")).keys()
 
 result_list = []
-
+result_list_dict = []
 for s in systems:
+    print(s)
     (
         perf_matrix_initial,
         input_features,
@@ -54,13 +58,6 @@ for s in systems:
 
         # We can normalize before splitting, because
         # we normalize per input and we also split per input.
-        # There is no data leakage.
-        # normalized_metrics = (
-        #     perf_matrix_initial[["inputname"] + all_performances]
-        #     .groupby("inputname", as_index=False)
-        #     .transform(lambda x: (x - x.min()) / (x.max() - x.min()))
-        # )
-
         nmdf = (
             perf_matrix_initial[["inputname"] + all_performances]
             .groupby("inputname", as_index=True)
@@ -166,63 +163,34 @@ for s in systems:
                 input_features.query("inputname.isin(@input_labels.index)")
             )
 
-            # TODO Cross-validation
-            # TODO Is decision tree the best model for the final prediction?
-
-            train_idx, val_idx = train_test_split(
-                np.arange(X.shape[0]), test_size=0.2, random_state=random_state
-            )
-            X_train = X[train_idx]
-            X_val = X[val_idx]
-            y_train = y[train_idx]
-            y_val = y[val_idx]
-            inputnames_val = input_labels.index[val_idx]
-
-            # X_train = X
-            # y_train = y
-            # X_val = X
-            # y_val = y
-            # inputnames_val = input_labels.index
-
-            best_val_rank = 100_000
-            best_depth = 0
-
-            # for i in range(1, X.shape[1]):
-            #     # print(i)
-            #     # clf = DecisionTreeClassifierWithMultipleLabels(max_depth=i, random_state=random_state)
-            #     if classifier == "dt":
-            #         clf = DecisionTreeClassifier(max_depth=i, random_state=random_state)
-            #     else:
-            #         clf = RandomForestClassifier(
-            #             n_estimators=10, max_depth=i, random_state=random_state
-            #         )
-            #     # clf = DecisionTreeClassifier(max_depth=i, random_state=random_state)
-            #     clf.fit(X_train, y_train)
-
-            #     # Validation test
-            #     pred_cfg_lbl = clf.predict(X_val)
-            #     pred_cfg = enc.inverse_transform(pred_cfg_lbl).astype(int)
-            #     inp_pred_map = pd.DataFrame(
-            #         zip(inputnames_val, pred_cfg),
-            #         columns=["inputname", "configurationID"],
-            #     )
-            #     val_rank = icm.merge(inp_pred_map, on=["inputname", "configurationID"])[
-            #         "worst_case_performance"
-            #     ].mean()
-
-            #     if val_rank < best_val_rank:
-            #         best_val_rank = val_rank
-            #         best_depth = i
-
-            # print(f"Best depth {best_depth} ({best_val_rank})")
 
             if classifier == "dt":
-                clf = DecisionTreeClassifier(max_depth=None, random_state=random_state)
+                parameter_grid = {
+                    "max_depth": range(1, X.shape[1] + 1),
+                    "criterion": ["entropy", "gini"],
+                }
+                clf = DecisionTreeClassifier()
             else:
-                clf = RandomForestClassifier(
-                    n_estimators=10, max_depth=None, random_state=random_state
-                )
+                parameter_grid = {
+                    "n_estimators": [4, 8, 12, 16], #range(1, 100, 10),
+                    "max_depth": range(1, X.shape[1] + 1),
+                    "criterion": ["entropy", "gini"],
+                }
+                clf = RandomForestClassifier()
+
+            clf = GridSearchCV(
+                clf,
+                parameter_grid,
+                cv=KFold(n_splits=4, random_state=random_state, shuffle=True),
+                n_jobs=-1,
+                refit=True,
+            )
             clf.fit(X, y)
+
+            split_result = {
+                "classifier": classifier,
+                **clf.best_params_,
+            }
 
             X_test = input_preprocessor.transform(
                 input_features.query("inputname.isin(@test_inp)")
@@ -230,34 +198,35 @@ for s in systems:
             pred_cfg = enc.inverse_transform(clf.predict(X_test)).astype(int)
 
             sdc_wcp = eval_prediction(pred_cfg)
-            
-            if classifier == "dt":
-                leaf_nodes = np.where(clf.tree_.children_left == clf.tree_.children_right)[
-                    0
-                ]
-                num_leaf_nodes = len(leaf_nodes)
-                num_predictable_configs = np.unique(
-                    clf.tree_.value[leaf_nodes, 0, :].argmax(axis=-1)
-                ).shape[0]
-                max_depth = clf.get_depth()
-            else:
-                num_leaf_nodes = 0
-                num_predictable_configs = []
-                for est in clf.estimators_:
-                    leaf_nodes = np.where(est.tree_.children_left == est.tree_.children_right)[
-                        0
-                    ]
-                    num_leaf_nodes += len(leaf_nodes)
-                    num_predictable_configs.append(
-                        np.unique(
-                            est.tree_.value[leaf_nodes, 0, :].argmax(axis=-1)
-                        )
-                    )
-                num_predictable_configs = np.unique(np.concatenate(num_predictable_configs)).shape[0]
-                max_depth = max([est.get_depth() for est in clf.estimators_])
-            num_total_configs = perf_matrix.configurationID.nunique()
 
-            print(f"SDC-WCP: {sdc_wcp.mean():.2f}+-{sdc_wcp.std():.2f} (with {num_predictable_configs} configs)")
+            # if classifier == "dt":
+            #     leaf_nodes = np.where(
+            #         clf.tree_.children_left == clf.tree_.children_right
+            #     )[0]
+            #     num_leaf_nodes = len(leaf_nodes)
+            #     num_predictable_configs = np.unique(
+            #         clf.tree_.value[leaf_nodes, 0, :].argmax(axis=-1)
+            #     ).shape[0]
+            #     max_depth = clf.get_depth()
+            # else:
+            #     num_leaf_nodes = 0
+            #     num_predictable_configs = []
+            #     for est in clf.estimators_:
+            #         leaf_nodes = np.where(
+            #             est.tree_.children_left == est.tree_.children_right
+            #         )[0]
+            #         num_leaf_nodes += len(leaf_nodes)
+            #         num_predictable_configs.append(
+            #             np.unique(est.tree_.value[leaf_nodes, 0, :].argmax(axis=-1))
+            #         )
+            #     num_predictable_configs = np.unique(
+            #         np.concatenate(num_predictable_configs)
+            #     ).shape[0]
+            #     max_depth = max([est.get_depth() for est in clf.estimators_])
+            num_total_configs = perf_matrix.configurationID.nunique()
+            num_predictable_configs = -1  # icm.configurationID.nunique()
+            max_depth = -1  # clf.best_params_["max_depth"]
+            num_leaf_nodes = -1  # clf.best_params_["max_depth"]
 
             ## These are our evaluation baselines
             # Baseline results
@@ -267,9 +236,16 @@ for s in systems:
                 icm_test,
                 dataset,
                 config_features,
-                verbose=True,
+                verbose=False,
             )
+            baseline["sdc_avg"] = sdc_wcp.mean()
+            baseline["sdc_std"] = sdc_wcp.std()
+            baseline["sdc_max"] = sdc_wcp.max()
+            split_result.update(baseline)
 
+            print(json.dumps(split_result, indent=2, sort_keys=True))
+
+            result_list_dict.append(split_result)
             result_list.append(
                 (
                     s,
@@ -282,15 +258,15 @@ for s in systems:
                     num_predictable_configs / num_total_configs,
                     sdc_wcp.mean(),
                     sdc_wcp.std(),
-                    baseline["best"][0],
-                    baseline["best"][1],
+                    baseline["best_avg"],
+                    baseline["best_std"],
                     baseline["best_num_configs"] / num_total_configs,
-                    baseline["average"][0],
-                    baseline["average"][1],
-                    baseline["overall"][0],
-                    baseline["overall"][1],
-                    baseline["metric"][0],
-                    baseline["metric"][1],
+                    baseline["average_avg"],
+                    baseline["average_std"],
+                    baseline["overall_avg"],
+                    baseline["overall_std"],
+                    baseline["metric_avg"],
+                    baseline["metric_std"],
                 )
             )
 
@@ -356,7 +332,9 @@ aggdf = (
 for (r, pn), v in aggdf.iterrows():
     res = " & ".join(
         [
-            "${avg:.2f}\\pm{std:.2f}$".format(avg=100*v[f"{b}_avg"], std=100*v[f"{b}_std"])
+            "${avg:.2f}\\pm{std:.2f}$".format(
+                avg=100 * v[f"{b}_avg"], std=100 * v[f"{b}_std"]
+            )
             for b in baselines
         ]
     )

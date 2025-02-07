@@ -185,9 +185,10 @@ for s in systems:
                 perf_matrix[perf_matrix.inputname.isin(all_above_threshold)].groupby('inputname')
                 .apply(lambda x: x.loc[x['worst_case_performance'].idxmin()], include_groups=False)["configurationID"].apply(lambda x: enc.transform([x]))
             )
+            dataset = pd.concat([dataset_below, dataset_above]).sort_index()
 
             # TODO Prepare correct input labels and y vector for multi-cfg case
-            input_labels = pd.concat([dataset_below, dataset_above]).sort_index()
+            input_labels = dataset
             # input_labels = (
             #     icm.reset_index().groupby('inputname')
             #     .apply(lambda x: x.loc[x['worst_case_performance'].idxmin()], include_groups=False)
