@@ -7,7 +7,7 @@ from scipy import stats
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import KFold, train_test_split
 from sklearn.multioutput import _MultiOutputEstimator
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, PolynomialFeatures
 from sklearn.base import ClassifierMixin
 
 
@@ -186,7 +186,7 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
 
     input_preprocessor = ColumnTransformer(
         transformers=[
-            # ("num", StandardScaler(), input_columns_cont),
+            ("num", PolynomialFeatures(degree=2), input_columns_cont),
             (
                 "cat",
                 OneHotEncoder(
@@ -916,3 +916,11 @@ class DecisionTreeClassifierWithMultipleLabelsPandas:
                 to_traverse.append(node["right"])
 
         return len(np.unique(values))
+
+
+def get_leaf_values(tree):
+    """Get all leaf node values from a decision tree"""
+    children_left = tree.children_left
+    children_right = tree.children_right
+    is_leaf = np.logical_and((children_left == -1), (children_right == -1))
+    return tree.value[is_leaf].argmax(axis=-1)
