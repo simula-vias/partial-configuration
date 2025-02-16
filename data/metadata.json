@@ -32,9 +32,9 @@
             "if_statement"
         ],
         "performances": [
+            "exec",
             "size",
-            "ctime",
-            "exec"
+            "ctime"
         ]
     },
     "imagemagick": {
@@ -118,9 +118,9 @@
             "size"
         ],
         "performances": [
-            "conflicts",
+            "reductions",
             "cps",
-            "reductions"
+            "conflicts"
         ]
     },
     "nodejs": {
@@ -235,21 +235,21 @@
             "tab8"
         ],
         "performances": [
-            "q1",
-            "q2",
-            "q3",
-            "q4",
-            "q5",
-            "q6",
-            "q7",
-            "q8",
-            "q9",
-            "q10",
-            "q11",
-            "q12",
-            "q13",
-            "q14",
-            "q15"
+            "q8", 
+            "q10", 
+            "q2", 
+            "q13", 
+            "q5", 
+            "q7", 
+            "q1", 
+            "q3", 
+            "q9", 
+            "q14", 
+            "q6", 
+            "q12", 
+            "q4", 
+            "q15", 
+            "q11"
         ]
     },
     "x264": {
@@ -330,11 +330,10 @@
             "COLOR_COMPLEXITY"
         ],
         "performances": [
-            "size",
-            "etime",
-            "cpu",
             "fps",
-            "kbs"
+            "kbs",
+            "etime",
+            "cpu"
         ]
     },
     "xz": {
