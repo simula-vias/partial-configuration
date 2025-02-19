@@ -137,7 +137,8 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
         perf_matrix["kbs"] = -perf_matrix["kbs"]
         # if kbs is supposed to be higher, than size must be too
         del perf_matrix["size"]
-        del performances[performances.index("size")]
+
+        # del performances[performances.index("size")]
         # perf_matrix["size"] = -perf_matrix["size"]
         # perf_matrix["worst_case_performance"] = perf_matrix[performances].max(axis=1)
 
@@ -186,7 +187,7 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
 
     input_preprocessor = ColumnTransformer(
         transformers=[
-            ("num", PolynomialFeatures(degree=2), input_columns_cont),
+            # ("num", PolynomialFeatures(degree=2), input_columns_cont),
             (
                 "cat",
                 OneHotEncoder(
