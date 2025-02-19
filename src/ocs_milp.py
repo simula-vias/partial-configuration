@@ -1,5 +1,5 @@
 # %%
-import cpmpy as cp
+import cvxpy as cp
 import numpy as np
 import pandas as pd
 import argparse
@@ -15,7 +15,9 @@ warnings.filterwarnings("ignore")
 # %%
 
 
-def find_optimal_configurations(system, performances=None, optimization_target="mean"):
+def find_optimal_configurations(
+    system, num_performances=None, optimization_target="mean"
+):
     """
     Find optimal configurations for a given system and performance metrics.
 
@@ -23,8 +25,6 @@ def find_optimal_configurations(system, performances=None, optimization_target="
         system (str): Name of the system to analyze
         performances (list): List of performance metrics to consider. If None, uses all available metrics.
         optimize_type (str): Type of optimization - either 'mean' or 'max'
-        random_state (int): Random seed for reproducibility
-        test_size (float): Proportion of data to use for testing
 
     Returns:
         list: List of dictionaries containing results for each configuration count
@@ -39,8 +39,12 @@ def find_optimal_configurations(system, performances=None, optimization_target="
         _,
     ) = load_data(system=system, data_dir="./data", input_properties_type="tabular")
 
-    if performances is None or len(performances) == 0:
+    if num_performances is None:
         performances = all_performances
+    else:
+        performances = all_performances[:num_performances]
+
+    print(f"Using {len(performances)} performances: {performances}")
 
     # Normalize performance metrics
     nmdf = (
@@ -67,61 +71,70 @@ def find_optimal_configurations(system, performances=None, optimization_target="
     # Setup optimization parameters
     max_configs = cip.shape[0]
     scaling_factor = 10_000
-    best_wcp = 0
+    prev_best_cost = 0
     results = []
-    last_configs = None
+    prev_configs = None
+    M = 1e6
+    
+    cip = cip.iloc[:, :100]
+
+    # Convert to costs (higher is worse)
+    cip_np = cp.Parameter(
+        cip.shape, 
+        nonneg=True, 
+        value=np.round((cip) * scaling_factor).astype(np.int64).to_numpy()
+    )
+    cfg_map = {i: cip.index[i] for i in range(cip_np.shape[0])}
 
     # Find optimal configurations for increasing numbers of configurations
     for num_configs in range(1, max_configs + 1):
         print(f"Solving for {num_configs} configs")
 
-        cip_np = np.round((1 - cip) * scaling_factor).astype(np.int64).to_numpy()
-        input_cost_ub = scaling_factor
+        # Create binary variables for configuration selection
+        x = cp.Variable(cip_np.shape[0], boolean=True, name="cfg")
+        
+        # Variable for the cost of each input
+        item_cost = cp.Variable(cip_np.shape[1], nonneg=True, name="item_cost")
 
-        # Create boolean variables for each configuration
-        x = cp.boolvar(shape=cip_np.shape[0], name="cfg")
-        cfg_map = {i: cip.index[i] for i in range(cip_np.shape[0])}
+        constraints = [
+            cp.sum(x) == num_configs,  # Select exactly num_configs configurations
+            item_cost >= 0,
+            # item_cost <= scaling_factor,  # Upper bound on costs
+        ]
 
-        # One int per input to store the minimum WCP for that input
-        item_cost = cp.intvar(shape=cip_np.shape[1], lb=0, ub=input_cost_ub)
-
-        # Calculate costs
+        # For each input
         for inp_idx in range(cip_np.shape[1]):
-            effective_cost = cip_np[:, inp_idx] * x
-            item_cost[inp_idx] = cp.max(effective_cost)
+            # item_cost[inp_idx] should equal the maximum cost among selected configurations
+            # This can be modeled as: item_cost[inp_idx] >= cost[i] for each selected config i
+            constraints.append(
+                item_cost[inp_idx] >= cp.multiply(cip_np[:, inp_idx], x) + M * (1 - x)
+            )
 
         # Choose objective based on optimization target
         if optimization_target == "mean":
-            obj = cp.sum(item_cost)  # Mean WCP
+            objective = cp.Minimize(cp.sum(item_cost))
         else:
-            # TODO Max WCP optimization is not working
-            obj = cp.min(item_cost)  # Max WCP
+            objective = cp.Minimize(cp.max(item_cost))
 
-        m = cp.Model(cp.sum(x) == num_configs, maximize=obj)
-        m += obj >= best_wcp
+        # Add constraint to ensure we don't get worse than previous solution
+        if prev_configs is not None:
+            constraints.append(cp.sum(item_cost) <= prev_best_cost)
 
-        s = cp.SolverLookup.get("ortools", m)
+        # Create and solve the problem
+        prob = cp.Problem(objective, constraints)
+        
+        prob.solve(solver=cp.SCIP, verbose=True)
 
-        # TODO Set to previous solution + next best non-dominated config
-        # Start from mean best solution in iteration 1 (or skip iteration 1 because we know it's the best one)
-        if last_configs is not None:
-            hint = np.zeros_like(x, dtype=bool)
-            hint[last_configs] = True
-            s.solution_hint(x, hint)
-
-        # Solve the model
-        # TODO Use solveAll to collect all equivalent solutions
-        solve_result = s.solve(num_search_workers=12)
-        if solve_result is None:
-            print(f"No solution found for {num_configs} configs")
+        print(prob.status)
+        if prob.status != cp.OPTIMAL:
+            print(f"No optimal solution found for {num_configs} configs")
             continue
 
-        last_configs = np.where(x.value())[0]
+        # Extract results
+        last_configs = np.where(x.value > 0.5)[0]
         real_configs = [cfg_map[i] for i in last_configs]
-        real_input_cost = np.mean(1 - (item_cost.value()[last_configs] / scaling_factor))
-        best_wcp = max(best_wcp, obj.value())
-
-        # TODO Something's wrong: input_cost should be much closer to wcp_mean/_max
+        real_input_cost = np.mean((item_cost.value[last_configs] / scaling_factor))  # TODO This is wrong, indexes inputs with config ids
+        prev_best_cost = prob.value
 
         iter_result = {
             "num_configs": num_configs,
@@ -134,11 +147,14 @@ def find_optimal_configurations(system, performances=None, optimization_target="
         results.append(iter_result)
         print(iter_result)
 
+        # Stop if we've reached optimal performance
         if real_input_cost == 0 or (
             len(results) >= 2 and real_input_cost == results[-2]["input_cost"]
         ):
             print(f"Found optimal assignment with {num_configs} configs")
             break
+
+        prev_configs = real_configs
 
     return results
 
@@ -182,12 +198,11 @@ def main():
     parser.add_argument(
         "--system", type=str, help="Name of the system to analyze", default="poppler"
     )
-    # TODO Change to give number of performances and pick first in list given from load_data
     parser.add_argument(
         "--performances",
-        nargs="*",
-        help="List of performance metrics to consider",
-        default=["size", "time"],  # TODO Change to give number of performances and pick first in list given from load_data
+        type=int,
+        help="Number of performance metrics to consider",
+        default=None,
     )
     parser.add_argument(
         "--optimize_type",
