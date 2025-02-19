@@ -13,12 +13,8 @@ from rich.table import Table
 
 from common import load_data
 
-# TODO Max optimization is not working correctly
-# - not stopping correctly
-# - doesn't reduce or only minimally?
 
-
-def solve_min_sum_selection(matrix, k, optimization_target="mean"):
+def solve_min_sum_selection(matrix, k, optimization_target="mean", prev_solution=None):
     """
     Solves the row selection problem where:
     - Given NxM matrix
@@ -47,6 +43,10 @@ def solve_min_sum_selection(matrix, k, optimization_target="mean"):
     # y[j] represents the minimum value in column j among selected rows
     y = pl.LpVariable.dicts("col_min", range(M))
 
+    min_indicator = pl.LpVariable.dicts(
+        "min_indicator", ((i, j) for i in range(N) for j in range(M)), cat="Binary"
+    )
+
     # Objective: Minimize sum of column minimums
     if optimization_target == "mean":
         prob += pl.lpSum(y[j] for j in range(M))
@@ -57,33 +57,53 @@ def solve_min_sum_selection(matrix, k, optimization_target="mean"):
         prob += max_val
 
     # Constraints
-    big_M = max(max(row) for row in matrix) * 2
+    big_M = max(max(row) for row in matrix) + 1
 
     # 1. Select exactly k rows
     prob += pl.lpSum(x[i] for i in range(N)) == k
 
-    # 2. For each column j, y[j] must be greater than or equal to the value
-    #    in each selected row for that column, and we need at least one equality
     for j in range(M):
-        # Add constraints that y[j] must be >= any selected value
         for i in range(N):
-            prob += y[j] >= matrix[i][j] * x[i]
+            # The minimum can only be selected if the row is selected
+            prob += min_indicator[i, j] <= x[i]
 
-        # Add constraint that y[j] must equal at least one selected value
-        prob += pl.lpSum(matrix[i][j] * x[i] for i in range(N)) <= y[j] + big_M * (
-            1 - pl.lpSum(x[i] for i in range(N))
-        )
+            # The minimum value must be at least as large as the selected value
+            prob += y[j] >= matrix[i][j] - (1 - min_indicator[i, j]) * big_M
+            prob += y[j] <= matrix[i][j] + (1 - min_indicator[i, j]) * big_M
+
+            prob += y[j] <= matrix[i][j] + (1 - x[i]) * big_M
+
+        # Ensure exactly one minimum value is selected per column
+        prob += pl.lpSum(min_indicator[i, j] for i in range(N)) == 1
+
+        prob += y[j] <= pl.lpSum(matrix[i][j] * x[i] for i in range(N))
+        prob += y[j] >= 0
+
+    if prev_solution is not None:
+        for i in range(N):
+            x[i].setInitialValue(1 if i in prev_solution else 0)
 
     # Solve the problem
-    solver = pl.getSolver("PULP_CBC_CMD", threads=4, msg=0)
+    solver = pl.getSolver(
+        "PULP_CBC_CMD", threads=8, msg=1, warmStart=prev_solution is not None
+    )
     status = prob.solve(solver)
 
     # Print debug information
     print(f"Status: {pl.LpStatus[status]}")
 
+    if status != pl.LpStatusOptimal:
+        print(f"Status: {pl.LpStatus[status]}")
+        print(f"Objective value: {pl.value(prob.objective)}")
+        raise ValueError("Not optimal")
+
     # Extract results
     selected_rows = [i for i in range(N) if pl.value(x[i]) > 0.5]
     objective_value = pl.value(prob.objective)
+
+    if optimization_target == "mean":
+        objective_value = objective_value / M
+
     print(f"Objective value: {objective_value}")
 
     return selected_rows, objective_value
@@ -92,16 +112,13 @@ def solve_min_sum_selection(matrix, k, optimization_target="mean"):
 # %%
 
 
-def find_optimal_configurations(
-    system, num_performances=None, optimization_target="mean"
-):
+def find_optimal_configurations(system, optimization_target="mean"):
     """
     Find optimal configurations for a given system and performance metrics.
 
     Args:
         system (str): Name of the system to analyze
-        performances (list): List of performance metrics to consider. If None, uses all available metrics.
-        optimize_type (str): Type of optimization - either 'mean' or 'max'
+        optimization_target (str): Type of optimization - either 'mean' or 'max'
 
     Returns:
         list: List of dictionaries containing results for each configuration count
@@ -120,7 +137,7 @@ def find_optimal_configurations(
     console = Console()
     scaling_factor = 10_000
 
-    for num_performances in range(1, len(all_performances) + 1):
+    for num_performances in range(1, 2):  # len(all_performances) + 1):
         performances = all_performances[:num_performances]
 
         print(f"{system}: Using {len(performances)} performances: {performances}")
@@ -157,12 +174,19 @@ def find_optimal_configurations(
         cip_np = np.round(cip * scaling_factor).astype(np.int64).to_numpy()
         cfg_map = {i: cip.index[i] for i in range(cip_np.shape[0])}
 
+        if optimization_target == "mean":
+            seed_cfg = cip.mean(axis=1).idxmin()
+        else:
+            seed_cfg = cip.max(axis=1).idxmin()
+
+        indices = [k for k, v in cfg_map.items() if v == seed_cfg]
+
         # Find optimal configurations for increasing numbers of configurations
         for num_configs in range(1, max_configs + 1):
             print(f"\nSolving for {num_configs} configs")
 
             indices, obj_value = solve_min_sum_selection(
-                cip_np, num_configs, optimization_target
+                cip_np, num_configs, optimization_target, prev_solution=indices
             )
 
             # Extract results
@@ -195,9 +219,9 @@ def find_optimal_configurations(
 
             table.add_row("Number of Configs", str(num_configs))
             table.add_row("Selected Configs", str(real_configs))
-            table.add_row("Input Cost", f"{obj_value / scaling_factor:.4f}")
-            table.add_row("WCP Mean", f"{wcp_mean:.4f}")
-            table.add_row("WCP Max", f"{wcp_max:.4f}")
+            table.add_row("Input Cost", f"{obj_value / scaling_factor:.5f}")
+            table.add_row("WCP Mean", f"{wcp_mean:.5f}")
+            table.add_row("WCP Max", f"{wcp_max:.5f}")
             table.add_row("Optimization Target", optimization_target)
 
             console.print(table)
@@ -206,7 +230,7 @@ def find_optimal_configurations(
             optimization_target_column_name = (
                 "wcp_mean" if optimization_target == "mean" else "wcp_max"
             )
-            if target_result == 0 or (
+            if target_result < 0.00005 or (
                 num_configs >= 2
                 and target_result == results[-2][optimization_target_column_name]
             ):
@@ -216,14 +240,13 @@ def find_optimal_configurations(
     return results
 
 
-def save_results(results, system, performances, output_dir="results"):
+def save_results(results, system, output_dir="results"):
     """Save results to a CSV file"""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    # Create filename based on system, performances and optimization target
-    perf_str = "_".join(performances) if performances else "all"
+    # Create filename based on system and optimization target
     opt_target = results[0]["optimization_target"]
-    filename = f"ocs_{system}_{opt_target}_{perf_str}.csv"
+    filename = f"ocs_{system}_{opt_target}.csv"
     filepath = Path(output_dir) / filename
 
     # Prepare results for CSV
@@ -264,21 +287,33 @@ def print_results(results):
     )
 
     # Add columns
+    table.add_column("#P", style="magenta", justify="right")
     table.add_column("#Cfgs", style="magenta", justify="right")
     table.add_column("Input Cost", style="magenta", justify="right")
     table.add_column("WCP Mean", style="magenta", justify="right")
     table.add_column("WCP Max", style="magenta", justify="right")
-    table.add_column("Selected Configs", style="magenta")
 
-    # Add mean results
+    # Track previous performance count to add dividers
+    prev_perf_count = None
+
+    # Add results
     for result in results:
+        # Add divider if performance count changes
+        if (
+            prev_perf_count is not None
+            and prev_perf_count != result["num_performances"]
+        ):
+            table.add_section()
+
         table.add_row(
+            str(result["num_performances"]),
             str(result["num_configs"]),
             f"{result['input_cost']:.4f}",
             f"{result['wcp_mean']:.4f}",
             f"{result['wcp_max']:.4f}",
-            str(result["selected_configs"]),
         )
+
+        prev_perf_count = result["num_performances"]
 
     console.print("\n")
     console.print(table)
@@ -296,12 +331,6 @@ def main():
         default="imagemagick",
     )
     parser.add_argument(
-        "--performances",
-        type=int,
-        help="Number of performance metrics to consider",
-        default=None,
-    )
-    parser.add_argument(
         "--optimize_type",
         type=str,
         choices=["mean", "max"],
@@ -313,12 +342,10 @@ def main():
 
     results = find_optimal_configurations(
         args.system,
-        args.performances,
         args.optimize_type,
     )
     print_results(results)
-
-    save_results(results, args.system, args.performances)
+    save_results(results, args.system)
 
 
 if __name__ == "__main__":
