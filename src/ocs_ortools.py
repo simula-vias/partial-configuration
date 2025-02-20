@@ -12,7 +12,14 @@ from rich.table import Table
 from common import load_data
 
 
-def solve_min_sum_selection(matrix, k, optimization_target="mean", prev_solution=None, prev_obj_value=None, num_threads=1):
+def solve_min_sum_selection(
+    matrix,
+    k,
+    optimization_target="mean",
+    prev_solution=None,
+    prev_obj_value=None,
+    num_threads=1,
+):
     """
     Solves the row selection problem where:
     - Given NxM matrix
@@ -35,27 +42,27 @@ def solve_min_sum_selection(matrix, k, optimization_target="mean", prev_solution
     M = len(matrix[0])  # Number of columns
 
     # Create the solver
-    solver = pywraplp.Solver.CreateSolver('CP_SAT')
+    solver = pywraplp.Solver.CreateSolver("CP_SAT")
 
     # Decision Variables
     # x[i] = 1 if row i is selected, 0 otherwise
-    x = [solver.BoolVar(f'x_{i}') for i in range(N)]
+    x = [solver.BoolVar(f"x_{i}") for i in range(N)]
 
     # y[j] represents the minimum value in column j among selected rows
-    y = [solver.IntVar(0, solver.infinity(), f'y_{j}') for j in range(M)]
+    y = [solver.IntVar(0, int(matrix[:, j].max()), f"y_{j}") for j in range(M)]
 
     # min_indicator[i,j] = 1 if row i provides the minimum for column j
     min_indicator = {}
     for i in range(N):
         for j in range(M):
-            min_indicator[i,j] = solver.BoolVar(f'min_indicator_{i}_{j}')
+            min_indicator[i, j] = solver.BoolVar(f"min_indicator_{i}_{j}")
 
     # Objective: Minimize sum of column minimums or minimize maximum
     if optimization_target == "mean":
         objective = solver.Sum(y)
     else:
         max_val = max(max(row) for row in matrix)
-        objective = solver.IntVar(0, max_val, 'max_val')
+        objective = solver.IntVar(0, max_val, "max_val")
         for j in range(M):
             solver.Add(objective >= y[j])
 
@@ -74,29 +81,25 @@ def solve_min_sum_selection(matrix, k, optimization_target="mean", prev_solution
     for j in range(M):
         for i in range(N):
             # The minimum can only be selected if the row is selected
-            solver.Add(min_indicator[i,j] <= x[i])
+            solver.Add(min_indicator[i, j] <= x[i])
 
             # The minimum value must be at least as large as the selected value
-            solver.Add(y[j] >= matrix[i][j] - (1 - min_indicator[i,j]) * big_M)
-            solver.Add(y[j] <= matrix[i][j] + (1 - min_indicator[i,j]) * big_M)
+            solver.Add(y[j] >= matrix[i][j] - (1 - min_indicator[i, j]) * big_M)
+            solver.Add(y[j] <= matrix[i][j] + (1 - min_indicator[i, j]) * big_M)
 
             solver.Add(y[j] <= matrix[i][j] + (1 - x[i]) * big_M)
 
         # Ensure exactly one minimum value is selected per column
-        solver.Add(solver.Sum(min_indicator[i,j] for i in range(N)) == 1)
-        # solver.
+        solver.Add(solver.Sum(min_indicator[i, j] for i in range(N)) == 1)
         solver.Add(y[j] <= solver.Sum([matrix[i][j] * x[i] for i in range(N)]))
-        # solver.Add(y[j] >= 0)
 
     # Warm start if previous solution provided
-    # if prev_solution is not None:
-    #     for i in range(N):
-    #         x[i].SetSolution(1 if i in prev_solution else 0)
-
     if prev_solution is not None:
         solver.SetHint(x, [1 if i in prev_solution else 0 for i in range(N)])
 
     solver.SetNumThreads(num_threads)
+
+    # solver.EnableOutput()
 
     # Solve the problem
     status = solver.Solve()
@@ -112,9 +115,6 @@ def solve_min_sum_selection(matrix, k, optimization_target="mean", prev_solution
     # Extract results
     selected_rows = [i for i in range(N) if x[i].solution_value() > 0.5]
     objective_value = solver.Objective().Value()
-
-    # if optimization_target == "mean":
-    #     objective_value = objective_value / M
 
     print(f"Objective value: {objective_value}")
 
@@ -147,7 +147,7 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
     console = Console()
     scaling_factor = 10_000
 
-    for num_performances in range(1, 2):  # len(all_performances) + 1):
+    for num_performances in range(1, len(all_performances) + 1):
         performances = all_performances[:num_performances]
 
         print(f"{system}: Using {len(performances)} performances: {performances}")
@@ -185,21 +185,26 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
         cfg_map = {i: cip.index[i] for i in range(cip_np.shape[0])}
 
         if optimization_target == "mean":
-            seed_cfg = cip.mean(axis=1).idxmin()
+            seed_cfg = cip_np.mean(axis=1).argmin()
+            seed_obj_value = cip_np.mean(axis=1).min() * cip_np.shape[1]
         else:
-            seed_cfg = cip.max(axis=1).idxmin()
+            seed_cfg = cip_np.max(axis=1).argmin()
+            seed_obj_value = cip_np.max(axis=1).min()
 
         indices = [k for k, v in cfg_map.items() if v == seed_cfg]
-        obj_value = 1e9
+        obj_value = seed_obj_value
 
         # Find optimal configurations for increasing numbers of configurations
         for num_configs in range(1, max_configs + 1):
             print(f"\nSolving for {num_configs} configs")
 
             indices, obj_value = solve_min_sum_selection(
-                cip_np, num_configs, optimization_target, 
-                prev_solution=indices, prev_obj_value=obj_value,
-                num_threads=num_threads
+                cip_np,
+                num_configs,
+                optimization_target,
+                prev_solution=indices,
+                prev_obj_value=obj_value,
+                num_threads=num_threads,
             )
             input_cost = obj_value / cip_np.shape[1] / scaling_factor
 
@@ -367,4 +372,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()
