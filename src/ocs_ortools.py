@@ -113,7 +113,7 @@ def solve_min_sum_selection(
     assert solver.VerifySolution(1e-7, True)
 
     # Extract results
-    selected_rows = [i.item() for i in range(N) if x[i].solution_value() > 0.5]
+    selected_rows = [int(i) for i in range(N) if x[i].solution_value() > 0.5]
     objective_value = solver.Objective().Value()
 
     print(f"Objective value: {objective_value}")
