@@ -85,13 +85,12 @@ def solve_min_sum_selection(matrix, k, optimization_target="mean", prev_solution
 
     # Solve the problem
     solver = pl.getSolver(
-        "CBC_CMD",
+        "COIN_CMD",
         path="/opt/homebrew/bin/cbc",
         threads=8,
         msg=1,
         warmStart=prev_solution is not None,
     )
-    prob.writeMPS("test.mps")
     status = prob.solve(solver)
 
     # Print debug information
