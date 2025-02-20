@@ -1,12 +1,10 @@
-# %%
-# import cvxpy as cp
 import argparse
 import csv
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pulp as pl
+from ortools.linear_solver import pywraplp
 from rich import box
 from rich.console import Console
 from rich.table import Table
@@ -14,7 +12,7 @@ from rich.table import Table
 from common import load_data
 
 
-def solve_min_sum_selection(matrix, k, optimization_target="mean", prev_solution=None):
+def solve_min_sum_selection(matrix, k, optimization_target="mean", prev_solution=None, prev_obj_value=None, num_threads=1):
     """
     Solves the row selection problem where:
     - Given NxM matrix
@@ -24,106 +22,113 @@ def solve_min_sum_selection(matrix, k, optimization_target="mean", prev_solution
     Args:
         matrix: List of lists representing NxM matrix
         k: Number of rows to select
+        optimization_target: Either "mean" or "max"
+        prev_solution: Optional list of previously selected indices for warm start
+        prev_obj_value: Optional previous objective value for warm start
+        num_threads: Number of threads to use for solving (default: 1)
 
     Returns:
         selected_rows: List of indices of selected rows
         objective_value: Sum of column minimums
     """
-    # N, M = matrix.shape
     N = len(matrix)  # Number of rows
     M = len(matrix[0])  # Number of columns
 
-    # Create the model
-    prob = pl.LpProblem("MinSumSelection", pl.LpMinimize)
+    # Create the solver
+    solver = pywraplp.Solver.CreateSolver('CP_SAT')
 
     # Decision Variables
     # x[i] = 1 if row i is selected, 0 otherwise
-    x = pl.LpVariable.dicts("row", range(N), cat="Binary")
+    x = [solver.BoolVar(f'x_{i}') for i in range(N)]
 
     # y[j] represents the minimum value in column j among selected rows
-    y = pl.LpVariable.dicts("col_min", range(M))
+    y = [solver.IntVar(0, solver.infinity(), f'y_{j}') for j in range(M)]
 
-    min_indicator = pl.LpVariable.dicts(
-        "min_indicator", ((i, j) for i in range(N) for j in range(M)), cat="Binary"
-    )
-
-    # Objective: Minimize sum of column minimums
-    if optimization_target == "mean":
-        prob += pl.lpSum(y[j] for j in range(M))
-    else:
-        max_val = pl.LpVariable("max_val", lowBound=0)
+    # min_indicator[i,j] = 1 if row i provides the minimum for column j
+    min_indicator = {}
+    for i in range(N):
         for j in range(M):
-            prob += max_val >= y[j]
-        prob += max_val
+            min_indicator[i,j] = solver.BoolVar(f'min_indicator_{i}_{j}')
+
+    # Objective: Minimize sum of column minimums or minimize maximum
+    if optimization_target == "mean":
+        objective = solver.Sum(y)
+    else:
+        max_val = max(max(row) for row in matrix)
+        objective = solver.IntVar(0, max_val, 'max_val')
+        for j in range(M):
+            solver.Add(objective >= y[j])
+
+    if prev_obj_value is not None:
+        solver.Add(objective <= prev_obj_value)
+
+    solver.Minimize(objective)
 
     # Constraints
     big_M = max(max(row) for row in matrix) + 1
 
     # 1. Select exactly k rows
-    prob += pl.lpSum(x[i] for i in range(N)) == k
+    solver.Add(solver.Sum(x) == k)
 
+    # 2. Column minimum constraints
     for j in range(M):
         for i in range(N):
             # The minimum can only be selected if the row is selected
-            prob += min_indicator[i, j] <= x[i]
+            solver.Add(min_indicator[i,j] <= x[i])
 
             # The minimum value must be at least as large as the selected value
-            prob += y[j] >= matrix[i][j] - (1 - min_indicator[i, j]) * big_M
-            prob += y[j] <= matrix[i][j] + (1 - min_indicator[i, j]) * big_M
+            solver.Add(y[j] >= matrix[i][j] - (1 - min_indicator[i,j]) * big_M)
+            solver.Add(y[j] <= matrix[i][j] + (1 - min_indicator[i,j]) * big_M)
 
-            prob += y[j] <= matrix[i][j] + (1 - x[i]) * big_M
+            solver.Add(y[j] <= matrix[i][j] + (1 - x[i]) * big_M)
 
         # Ensure exactly one minimum value is selected per column
-        prob += pl.lpSum(min_indicator[i, j] for i in range(N)) == 1
+        solver.Add(solver.Sum(min_indicator[i,j] for i in range(N)) == 1)
+        # solver.
+        solver.Add(y[j] <= solver.Sum([matrix[i][j] * x[i] for i in range(N)]))
+        # solver.Add(y[j] >= 0)
 
-        prob += y[j] <= pl.lpSum(matrix[i][j] * x[i] for i in range(N))
-        prob += y[j] >= 0
+    # Warm start if previous solution provided
+    # if prev_solution is not None:
+    #     for i in range(N):
+    #         x[i].SetSolution(1 if i in prev_solution else 0)
 
     if prev_solution is not None:
-        for i in range(N):
-            x[i].setInitialValue(1 if i in prev_solution else 0)
+        solver.SetHint(x, [1 if i in prev_solution else 0 for i in range(N)])
+
+    solver.SetNumThreads(num_threads)
 
     # Solve the problem
-    solver = pl.getSolver(
-        "CBC_CMD",
-        path="/opt/homebrew/bin/cbc",
-        threads=8,
-        msg=1,
-        warmStart=prev_solution is not None,
-    )
-    prob.writeMPS("test.mps")
-    status = prob.solve(solver)
+    status = solver.Solve()
 
-    # Print debug information
-    print(f"Status: {pl.LpStatus[status]}")
-
-    if status != pl.LpStatusOptimal:
-        print(f"Status: {pl.LpStatus[status]}")
-        print(f"Objective value: {pl.value(prob.objective)}")
+    # Check if optimal solution found
+    if status != pywraplp.Solver.OPTIMAL:
+        print(f"Status: {status}")
+        print(f"Objective value: {solver.Objective().Value()}")
         raise ValueError("Not optimal")
 
-    # Extract results
-    selected_rows = [i for i in range(N) if pl.value(x[i]) > 0.5]
-    objective_value = pl.value(prob.objective)
+    assert solver.VerifySolution(1e-7, True)
 
-    if optimization_target == "mean":
-        objective_value = objective_value / M
+    # Extract results
+    selected_rows = [i for i in range(N) if x[i].solution_value() > 0.5]
+    objective_value = solver.Objective().Value()
+
+    # if optimization_target == "mean":
+    #     objective_value = objective_value / M
 
     print(f"Objective value: {objective_value}")
 
     return selected_rows, objective_value
 
 
-# %%
-
-
-def find_optimal_configurations(system, optimization_target="mean"):
+def find_optimal_configurations(system, optimization_target="mean", num_threads=1):
     """
     Find optimal configurations for a given system and performance metrics.
 
     Args:
         system (str): Name of the system to analyze
         optimization_target (str): Type of optimization - either 'mean' or 'max'
+        num_threads (int): Number of threads to use for solving (default: 1)
 
     Returns:
         list: List of dictionaries containing results for each configuration count
@@ -185,14 +190,18 @@ def find_optimal_configurations(system, optimization_target="mean"):
             seed_cfg = cip.max(axis=1).idxmin()
 
         indices = [k for k, v in cfg_map.items() if v == seed_cfg]
+        obj_value = 1e9
 
         # Find optimal configurations for increasing numbers of configurations
         for num_configs in range(1, max_configs + 1):
             print(f"\nSolving for {num_configs} configs")
 
             indices, obj_value = solve_min_sum_selection(
-                cip_np, num_configs, optimization_target, prev_solution=indices
+                cip_np, num_configs, optimization_target, 
+                prev_solution=indices, prev_obj_value=obj_value,
+                num_threads=num_threads
             )
+            input_cost = obj_value / cip_np.shape[1] / scaling_factor
 
             # Extract results
             real_configs = [cfg_map[i] for i in indices]
@@ -207,7 +216,7 @@ def find_optimal_configurations(system, optimization_target="mean"):
                 "performances": performances,
                 "num_configs": num_configs,
                 "selected_configs": real_configs,
-                "input_cost": obj_value / scaling_factor,
+                "input_cost": input_cost,
                 "wcp_mean": wcp_mean,
                 "wcp_max": wcp_max,
                 "optimization_target": optimization_target,
@@ -224,7 +233,7 @@ def find_optimal_configurations(system, optimization_target="mean"):
 
             table.add_row("Number of Configs", str(num_configs))
             table.add_row("Selected Configs", str(real_configs))
-            table.add_row("Input Cost", f"{obj_value / scaling_factor:.5f}")
+            table.add_row("Input Cost", f"{input_cost:.5f}")
             table.add_row("WCP Mean", f"{wcp_mean:.5f}")
             table.add_row("WCP Max", f"{wcp_max:.5f}")
             table.add_row("Optimization Target", optimization_target)
@@ -251,7 +260,7 @@ def save_results(results, system, output_dir="results"):
 
     # Create filename based on system and optimization target
     opt_target = results[0]["optimization_target"]
-    filename = f"ocs_{system}_{opt_target}.csv"
+    filename = f"ocs_{system}_{opt_target}_ortools.csv"
     filepath = Path(output_dir) / filename
 
     # Prepare results for CSV
@@ -277,13 +286,7 @@ def save_results(results, system, output_dir="results"):
 
 
 def print_results(results):
-    """
-    Print a summary table of results with mean and max optimization results
-
-    Args:
-        results_mean: List of result dictionaries from mean optimization
-        results_max: Optional list of result dictionaries from max optimization
-    """
+    """Print a summary table of results"""
     console = Console()
 
     table = Table(
@@ -327,20 +330,29 @@ def print_results(results):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Find optimal configurations for a system"
+        description="Find optimal configurations for a system using OR-Tools"
     )
     parser.add_argument(
+        "-s",
         "--system",
         type=str,
         help="Name of the system to analyze",
-        default="imagemagick",
+        default="nodejs",
     )
     parser.add_argument(
+        "-ot",
         "--optimize_type",
         type=str,
         choices=["mean", "max"],
-        help="Type of optimization to perform (mean, max, or both)",
+        help="Type of optimization to perform",
         default="mean",
+    )
+    parser.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        help="Number of threads to use for solving",
+        default=1,
     )
 
     args = parser.parse_args()
@@ -348,10 +360,11 @@ def main():
     results = find_optimal_configurations(
         args.system,
         args.optimize_type,
+        num_threads=args.threads,
     )
     print_results(results)
     save_results(results, args.system)
 
 
 if __name__ == "__main__":
-    main()
+    main() 
