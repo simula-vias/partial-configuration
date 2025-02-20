@@ -6,3 +6,6 @@ mlxtend
 plotnine
 seaborn
 fastcluster
+rich
+ortools
+pulp
