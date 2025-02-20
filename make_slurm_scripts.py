@@ -3,7 +3,7 @@ import json
 
 data_dir = Path("./data")
 slurm_dir = Path("./slurm")
-threads = 32
+threads = 48
 
 systems = json.load(open(data_dir / "metadata.json")).keys()
 
@@ -12,8 +12,8 @@ for system in systems:
 
     for ot in ["mean", "max"]:
         slurm_file = slurm_dir / f"ocs_{system}_{ot}.sh"
-        slurm_file.write_text(f"""
-#SBATCH -p milanq # partition (queue)
+        slurm_file.write_text(f"""#!/bin/sh
+#SBATCH -p fpgaq # partition (queue)
 #SBATCH --nodes 1
 #SBATCH --ntasks 1
 #SBATCH --cpus-per-task {threads}

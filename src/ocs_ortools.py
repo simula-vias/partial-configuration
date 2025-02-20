@@ -251,7 +251,11 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
             )
             if target_result < 0.00005 or (
                 num_configs >= 2
-                and target_result == results[-2][optimization_target_column_name]
+                and np.isclose(
+                    target_result,
+                    results[-2][optimization_target_column_name],
+                    atol=0.000005,
+                )
             ):
                 print(f"\nFound optimal assignment with {num_configs} configs")
                 break
