@@ -113,7 +113,7 @@ def solve_min_sum_selection(
     assert solver.VerifySolution(1e-7, True)
 
     # Extract results
-    selected_rows = [i for i in range(N) if x[i].solution_value() > 0.5]
+    selected_rows = [i.item() for i in range(N) if x[i].solution_value() > 0.5]
     objective_value = solver.Objective().Value()
 
     print(f"Objective value: {objective_value}")
@@ -273,13 +273,16 @@ def save_results(results, system, output_dir="results"):
 
     # Create filename based on system and optimization target
     opt_target = results[0]["optimization_target"]
-    filename = f"ocs_{system}_{opt_target}_ortools.csv"
+    filename = f"ocs_{system}_{opt_target}.csv"
     filepath = Path(output_dir) / filename
 
     # Prepare results for CSV
     csv_results = []
     for result in results:
         row = {
+            "system": result["system"],
+            "num_performances": result["num_performances"],
+            "performances": str(result["performances"]),
             "num_configs": result["num_configs"],
             "selected_configs": str(result["selected_configs"]),
             "input_cost": result["input_cost"],
