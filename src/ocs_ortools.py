@@ -61,7 +61,7 @@ def solve_min_sum_selection(
     if optimization_target == "mean":
         objective = solver.Sum(y)
     else:
-        max_val = max(max(row) for row in matrix)
+        max_val = int(max(max(row) for row in matrix))
         objective = solver.IntVar(0, max_val, "max_val")
         for j in range(M):
             solver.Add(objective >= y[j])
@@ -206,7 +206,11 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
                 prev_obj_value=obj_value,
                 num_threads=num_threads,
             )
-            input_cost = obj_value / cip_np.shape[1] / scaling_factor
+
+            if optimization_target == "mean":
+                input_cost = obj_value / cip_np.shape[1] / scaling_factor
+            else:
+                input_cost = obj_value / scaling_factor
 
             # Extract results
             real_configs = [cfg_map[i] for i in indices]
