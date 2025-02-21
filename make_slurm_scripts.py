@@ -11,7 +11,7 @@ for system in systems:
     print(system)
 
     for ot in ["mean", "max"]:
-        slurm_file = slurm_dir / f"ocs_{system}_{ot}.sh"
+        slurm_file = slurm_dir / f"ocs_{system}_{ot}_cv.sh"
         slurm_file.write_text(f"""#!/bin/sh
 #SBATCH -p fpgaq # partition (queue)
 #SBATCH --nodes 1
@@ -22,6 +22,6 @@ for system in systems:
 #SBATCH -e slurm.{system}_{ot}.%N.%j.err # STDERR
 
 echo "Running ocs for {system} with {ot} optimization"
-srun python src/ocs_ortools.py --system {system} --optimize_type {ot} --threads {threads}
+srun python src/ocs_ortools_cv.py --system {system} --optimize_type {ot} --threads {threads} -k 4
 echo "Done"
 """)
