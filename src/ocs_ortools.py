@@ -226,10 +226,7 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
                 num_threads=num_threads,
             )
 
-            if optimization_target == "mean":
-                input_cost = obj_value / cip_np.shape[1] / scaling_factor
-            else:
-                input_cost = obj_value / scaling_factor
+            input_cost = obj_value
 
             # Extract results
             real_configs = [cfg_map[i] for i in indices]
@@ -266,14 +263,10 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
 
             console.print(table)
 
-            # TODO This is not a reliable stopping criterion
+            # This is not a reliable stopping criterion for max
             # For wcp_max, we can have iterations without improvement,
             # because we must first cover all worst-case items through more configs
-            if optimization_target != "max" and num_configs >= 2 and np.isclose(
-                input_cost,
-                results[-2]["input_cost"],
-                atol=0.000005,
-            ):
+            if optimization_target != "max" and num_configs >= 2 and input_cost == results[-2]["input_cost"]:
                 print(f"\nNo improvement after {num_configs} configs")
                 break
 
