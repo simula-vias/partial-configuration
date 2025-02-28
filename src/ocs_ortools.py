@@ -19,6 +19,7 @@ def solve_min_sum_selection(
     prev_solution=None,
     prev_obj_value=None,
     num_threads=1,
+    scaling_factor=10_000,
 ):
     """
     Solves the row selection problem where:
@@ -57,17 +58,35 @@ def solve_min_sum_selection(
         for j in range(M):
             min_indicator[i, j] = solver.BoolVar(f"min_indicator_{i}_{j}")
 
-    # Objective: Minimize sum of column minimums or minimize maximum
-    if optimization_target == "mean":
-        objective = solver.Sum(y)
-    else:
+    def get_mean_objective(y):
+        return solver.Sum(y)
+
+    def get_max_objective(y):
         max_val = int(max(max(row) for row in matrix))
         objective = solver.IntVar(0, max_val, "max_val")
         for j in range(M):
             solver.Add(objective >= y[j])
+        return objective
 
-    if prev_obj_value is not None:
-        solver.Add(objective <= prev_obj_value)
+    if optimization_target == "mean":
+        objective = get_mean_objective(y)
+    elif optimization_target == "max":
+        objective = get_max_objective(y)
+    else:
+        # TODO Check two phase optimization, first max then mean
+        # More complex for the solver, but better for our experiments
+
+        max_mean_value = scaling_factor * N
+        max_obj_scale_factor = scaling_factor
+        while max_obj_scale_factor < max_mean_value:
+            max_obj_scale_factor *= 10
+
+        mean_objective = get_mean_objective(y)
+        max_objective = get_max_objective(y)
+        objective = max_obj_scale_factor * max_objective + mean_objective
+
+    # if prev_obj_value is not None:
+    #     solver.Add(objective <= prev_obj_value)
 
     solver.Minimize(objective)
 
@@ -217,8 +236,6 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
             wcp_mean = float(cip.loc[real_configs].min(axis=0).mean())
             wcp_max = float(cip.loc[real_configs].min(axis=0).max())
 
-            target_result = wcp_mean if optimization_target == "mean" else wcp_max
-
             iter_result = {
                 "system": system,
                 "num_performances": len(performances),
@@ -249,19 +266,15 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
 
             console.print(table)
 
-            # Stop if we've reached optimal performance
-            optimization_target_column_name = (
-                "wcp_mean" if optimization_target == "mean" else "wcp_max"
-            )
-            if target_result < 0.00005 or (
-                num_configs >= 2
-                and np.isclose(
-                    target_result,
-                    results[-2][optimization_target_column_name],
-                    atol=0.000005,
-                )
+            # TODO This is not a reliable stopping criterion
+            # For wcp_max, we can have iterations without improvement,
+            # because we must first cover all worst-case items through more configs
+            if optimization_target != "max" and num_configs >= 2 and np.isclose(
+                input_cost,
+                results[-2]["input_cost"],
+                atol=0.000005,
             ):
-                print(f"\nFound optimal assignment with {num_configs} configs")
+                print(f"\nNo improvement after {num_configs} configs")
                 break
 
     return results
@@ -314,8 +327,8 @@ def print_results(results):
     table.add_column("#P", style="magenta", justify="right")
     table.add_column("#Cfgs", style="magenta", justify="right")
     table.add_column("Input Cost", style="magenta", justify="right")
-    table.add_column("WCP Mean", style="magenta", justify="right")
     table.add_column("WCP Max", style="magenta", justify="right")
+    table.add_column("WCP Mean", style="magenta", justify="right")
 
     # Track previous performance count to add dividers
     prev_perf_count = None
@@ -333,8 +346,8 @@ def print_results(results):
             str(result["num_performances"]),
             str(result["num_configs"]),
             f"{result['input_cost']:.4f}",
-            f"{result['wcp_mean']:.4f}",
             f"{result['wcp_max']:.4f}",
+            f"{result['wcp_mean']:.4f}",
         )
 
         prev_perf_count = result["num_performances"]
@@ -353,15 +366,15 @@ def main():
         "--system",
         type=str,
         help="Name of the system to analyze",
-        default="nodejs",
+        default="lingeling",
     )
     parser.add_argument(
         "-ot",
         "--optimize_type",
         type=str,
-        choices=["mean", "max"],
+        choices=["mean", "max", "both"],
         help="Type of optimization to perform",
-        default="mean",
+        default="both",
     )
     parser.add_argument(
         "-t",
