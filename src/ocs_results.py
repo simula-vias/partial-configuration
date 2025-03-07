@@ -1,11 +1,14 @@
 # %%
-import pandas as pd
-import plotnine as p9
-from pathlib import Path
 import glob
+import json
+from pathlib import Path
+
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
-import json
+import pandas as pd
+import plotnine as p9
+from matplotlib.lines import Line2D
 
 # %%
 # Read all ocs_ files from results directory
@@ -284,9 +287,6 @@ plt.tight_layout()
 plt.show()
 
 # %%
-
-import matplotlib.cm as cm
-from matplotlib.lines import Line2D
 
 # Create a plot with wcp_max and wcp_mean as separate markers for each system + configuration
 # Filter for optimization_target="mean" only
@@ -676,7 +676,7 @@ def export_combined_df_to_json(df, output_path):
             perf_df = system_df[system_df["performances"] == num_perf]
 
             for _, row in perf_df.iterrows():
-                num_configs = row["num_configs"]
+                num_configs = str(row["num_configs"])
                 # Extract relevant data for each configuration
                 config_data = {
                     "wcp_mean": float(row["wcp_mean"]),
