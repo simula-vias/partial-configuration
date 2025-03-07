@@ -291,15 +291,15 @@ from matplotlib.lines import Line2D
 # Filter for optimization_target="mean" only
 
 
-def plot_wcp_mean_max_by_system(combined_df, optimization_target="mean", plot_title=False):
+def plot_wcp_mean_max_by_system(
+    combined_df, optimization_target="mean", plot_title=False
+):
     mean_opt_df = (
         combined_df[combined_df["optimization_target"] == optimization_target]
         .groupby(["system", "num_configs"], as_index=False)
         .min()
     )
-    performance_numbers = list(
-        map(str, sorted(mean_opt_df["num_configs"].unique()))
-    )
+    performance_numbers = list(map(str, sorted(mean_opt_df["num_configs"].unique())))
     print(performance_numbers)
     mean_opt_df["num_configs"] = mean_opt_df["num_configs"].astype(str)
 
@@ -310,7 +310,7 @@ def plot_wcp_mean_max_by_system(combined_df, optimization_target="mean", plot_ti
         value_vars=["wcp_mean", "wcp_max"],
         var_name="metric",
         value_name="value",
-    ) #.sort_values(by=["system", "num_configs", "metric"])
+    )  # .sort_values(by=["system", "num_configs", "metric"])
 
     # Add a config_id column to use for dodging (unique identifier for each configuration)
     long_format_df["config_id"] = long_format_df["num_configs"]
@@ -481,41 +481,41 @@ ccdf["num_performances"] = ccdf["num_performances"].astype(str)
 
 # Create separate plots for max and mean WCP
 p = (
-    p9.ggplot(ccdf) +
+    p9.ggplot(ccdf)
+    +
     # WCP max line (solid)
     p9.geom_line(
         p9.aes(
             x="num_configs",
-            y="wcp_max", 
+            y="wcp_max",
             color="num_performances",
             group="num_performances",
             # linetype="WCP Type"
         ),
-        linetype="solid"
-    ) +
-    # WCP mean line (dashed) 
+        linetype="solid",
+    )
+    +
+    # WCP mean line (dashed)
     p9.geom_line(
         p9.aes(
             x="num_configs",
             y="wcp_mean",
-            color="num_performances", 
+            color="num_performances",
             group="num_performances",
             # linetype="WCP Type"
         ),
-        linetype="dashed"
-    ) +
-    p9.theme_minimal() +
-    p9.facet_wrap("~system", scales="free", nrow=2) +
-    p9.labs(
+        linetype="dashed",
+    )
+    + p9.theme_minimal()
+    + p9.facet_wrap("~system", scales="free", nrow=2)
+    + p9.labs(
         title="WCP Max and Mean vs Number of Configurations",
         x="Number of Configurations",
         y="WCP Value",
-        color="Number of\nPerformances"
-    ) +
-    p9.scale_linetype_manual(
-        name="WCP Type",
-        values=["solid", "dashed"],
-        labels=["WCP Max", "WCP Mean"]
+        color="Number of\nPerformances",
+    )
+    + p9.scale_linetype_manual(
+        name="WCP Type", values=["solid", "dashed"], labels=["WCP Max", "WCP Mean"]
     )
 )
 p
@@ -540,12 +540,24 @@ num_cols = 4
 num_rows = (len(systems) + num_cols - 1) // num_cols  # Ceiling division
 
 # Create figure and subplots
-fig, axes = plt.subplots(nrows=num_rows, ncols=num_cols, figsize=(15, 3*num_rows))
+fig, axes = plt.subplots(nrows=num_rows, ncols=num_cols, figsize=(15, 3 * num_rows))
 axes = axes.flatten()
 
 # Define colors for different performance numbers
 colors = plt.cm.Set2(np.linspace(0, 1, len(performance_numbers)))
 color_map = dict(zip(performance_numbers, colors))
+
+# Create custom legend handles
+performance_handles = []
+for perf in performance_numbers:
+    performance_handles.append(
+        plt.Line2D([0], [0], color=color_map[perf], linestyle="-", label=f"|P|={perf}")
+    )
+
+linestyle_handles = [
+    plt.Line2D([0], [0], color="gray", linestyle="-", label="WCP Max"),
+    plt.Line2D([0], [0], color="gray", linestyle="--", label="WCP Mean"),
+]
 
 # Plot for each system
 for idx, system in enumerate(systems):
@@ -561,7 +573,6 @@ for idx, system in enumerate(systems):
             perf_data["wcp_max"],
             color=color_map[perf],
             linestyle="solid",
-            label=f"Max (|P|={perf})" if idx == 0 else None
         )
         
         # Plot WCP mean (dashed line)
@@ -570,12 +581,40 @@ for idx, system in enumerate(systems):
             perf_data["wcp_mean"],
             color=color_map[perf],
             linestyle="dashed",
-            label=f"Mean (|P|={perf})" if idx == 0 else None
         )
     
-    ax.set_title(f"System: {system}")
-    ax.set_xlabel("Number of Configurations")
-    ax.set_ylabel("WCP Value")
+    ax.set_title(f"System: {system} (#P={system_df['num_performances'].max()})")
+    
+    if idx >= num_cols:
+        ax.set_xlabel("Number of Configurations")
+    else:
+        ax.set_xlabel("")
+    
+    # Only show y-axis label for plots in the first column
+    if idx % num_cols == 0:
+        ax.set_ylabel("WCP Value")
+    else:
+        ax.set_ylabel("")
+    
+    # Set integer ticks on x-axis with appropriate spacing
+    x_min, x_max = ax.get_xlim()
+    x_min = max(1, int(x_min))
+    x_max = int(x_max) + 1
+    
+    # Determine appropriate tick spacing based on range
+    x_range = x_max - x_min
+    if x_range <= 10:
+        step = 1
+    elif x_range <= 20:
+        step = 2
+    elif x_range <= 50:
+        step = 5
+    else:
+        step = 10
+        
+    ax.set_xticks(range(x_min, x_max, step))
+    ax.set_xticklabels([str(x) for x in range(x_min, x_max, step)])
+    
     ax.grid(True, linestyle="--", alpha=0.7)
 
 # Remove empty subplots if any
@@ -583,17 +622,37 @@ if len(systems) < len(axes):
     for idx in range(len(systems), len(axes)):
         fig.delaxes(axes[idx])
 
-# Add a single legend for the first subplot
-axes[0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+# Add two legends to the first subplot
+# Place both legends inside the plot at the bottom in a single row
+legend1 = axes[5].legend(
+    handles=performance_handles,
+    title="#Performances",
+    loc="upper right",
+    # bbox_to_anchor=(0.0, 0.0),
+    # ncol=len(performance_numbers),
+    frameon=True,
+    framealpha=0.8,
+)
+
+axes[5].add_artist(legend1)
+
+legend2 = axes[5].legend(
+    handles=linestyle_handles,
+    title="WCP Type",
+    loc="upper center",
+    bbox_to_anchor=(0.35, 1.0),
+    # ncol=2,
+    frameon=True,
+    framealpha=0.8,
+)
 
 # Adjust layout to prevent overlap
 plt.tight_layout()
 
 # Save the plot
-plt.savefig("../results/wcp_max_mean_by_configs_matplotlib.pdf", 
-            dpi=300, 
-            bbox_inches='tight')
-print("Matplotlib version saved to ../results/wcp_max_mean_by_configs_matplotlib.pdf")
+plt.savefig(
+    "../results/rq1_wcp_max_mean.pdf", dpi=300, bbox_inches="tight"
+)
 
 # Display the plot
 plt.show()
