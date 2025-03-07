@@ -1,0 +1,19 @@
+system,num_performances,performances,num_configs,selected_configs,input_cost,wcp_mean,wcp_max,optimization_target
+imagemagick,1,['size'],1,[np.int64(96)],1103011186.0,0.001118573351498125,0.11033446505979239,both
+imagemagick,1,['size'],2,"[np.int64(82), np.int64(96)]",737004456.0,0.00044556194417079263,0.07372023103093599,both
+imagemagick,1,['size'],3,"[np.int64(82), np.int64(93), np.int64(96)]",0.0,0.0,0.0,both
+imagemagick,1,['size'],4,"[np.int64(8), np.int64(82), np.int64(93), np.int64(96)]",0.0,0.0,0.0,both
+imagemagick,2,"['size', 'time']",1,[np.int64(91)],3500247956.0,0.024795051998435826,0.35,both
+imagemagick,2,"['size', 'time']",2,"[np.int64(72), np.int64(93)]",1990261566.0,0.02615662133792597,0.19895287958115185,both
+imagemagick,2,"['size', 'time']",3,"[np.int64(72), np.int64(91), np.int64(96)]",1609196931.0,0.019693360032484605,0.16091954022988506,both
+imagemagick,2,"['size', 'time']",4,"[np.int64(24), np.int64(72), np.int64(91), np.int64(96)]",1392194374.0,0.019437544057083252,0.13924050632911386,both
+imagemagick,2,"['size', 'time']",5,"[np.int64(24), np.int64(72), np.int64(82), np.int64(91), np.int64(96)]",1333188202.0,0.018820375109019433,0.13333333333333333,both
+imagemagick,2,"['size', 'time']",6,"[np.int64(24), np.int64(52), np.int64(72), np.int64(82), np.int64(91), np.int64(96)]",1286182752.0,0.018275336136203232,0.12857142857142856,both
+imagemagick,2,"['size', 'time']",7,"[np.int64(24), np.int64(29), np.int64(52), np.int64(72), np.int64(75), np.int64(91), np.int64(96)]",1286178651.0,0.017864947381320377,0.12857142857142856,both
+imagemagick,2,"['size', 'time']",8,"[np.int64(24), np.int64(29), np.int64(52), np.int64(66), np.int64(72), np.int64(75), np.int64(91), np.int64(96)]",1286177856.0,0.01778539615535359,0.12857142857142856,both
+imagemagick,2,"['size', 'time']",9,"[np.int64(24), np.int64(30), np.int64(52), np.int64(66), np.int64(72), np.int64(75), np.int64(82), np.int64(91), np.int64(96)]",1286177148.0,0.017714630429084884,0.12857142857142856,both
+imagemagick,2,"['size', 'time']",10,"[np.int64(24), np.int64(30), np.int64(52), np.int64(58), np.int64(66), np.int64(72), np.int64(75), np.int64(82), np.int64(91), np.int64(96)]",1286176907.0,0.01769054319215894,0.12857142857142856,both
+imagemagick,2,"['size', 'time']",11,"[np.int64(23), np.int64(24), np.int64(30), np.int64(52), np.int64(58), np.int64(66), np.int64(72), np.int64(75), np.int64(82), np.int64(91), np.int64(96)]",1286176776.0,0.01767748490427591,0.12857142857142856,both
+imagemagick,2,"['size', 'time']",12,"[np.int64(23), np.int64(24), np.int64(30), np.int64(52), np.int64(58), np.int64(66), np.int64(72), np.int64(75), np.int64(82), np.int64(91), np.int64(93), np.int64(96)]",1286176671.0,0.0176669988856341,0.12857142857142856,both
+imagemagick,2,"['size', 'time']",13,"[np.int64(23), np.int64(24), np.int64(29), np.int64(30), np.int64(52), np.int64(58), np.int64(66), np.int64(72), np.int64(75), np.int64(82), np.int64(91), np.int64(93), np.int64(96)]",1286176644.0,0.017664319873742906,0.12857142857142856,both
+imagemagick,2,"['size', 'time']",14,"[np.int64(23), np.int64(24), np.int64(29), np.int64(30), np.int64(52), np.int64(58), np.int64(66), np.int64(72), np.int64(75), np.int64(82), np.int64(91), np.int64(93), np.int64(96), np.int64(99)]",1286176644.0,0.017664319873742906,0.12857142857142856,both
