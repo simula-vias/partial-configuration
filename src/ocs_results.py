@@ -5,6 +5,7 @@ from pathlib import Path
 import glob
 import matplotlib.pyplot as plt
 import numpy as np
+import json
 
 # %%
 # Read all ocs_ files from results directory
@@ -524,7 +525,7 @@ combined_df.num_performances.max()
 # %%
 
 # %%
-# Create matplotlib version of the same plot
+# This is the plot for RQ1
 print("\nCreating matplotlib version of the plot...")
 
 # Filter data for optimization_target="both"
@@ -563,10 +564,10 @@ linestyle_handles = [
 for idx, system in enumerate(systems):
     system_df = ccdf[ccdf["system"] == system]
     ax = axes[idx]
-    
+
     for perf in performance_numbers:
         perf_data = system_df[system_df["num_performances"] == perf]
-        
+
         # Plot WCP max (solid line)
         ax.plot(
             perf_data["num_configs"],
@@ -574,7 +575,7 @@ for idx, system in enumerate(systems):
             color=color_map[perf],
             linestyle="solid",
         )
-        
+
         # Plot WCP mean (dashed line)
         ax.plot(
             perf_data["num_configs"],
@@ -582,25 +583,25 @@ for idx, system in enumerate(systems):
             color=color_map[perf],
             linestyle="dashed",
         )
-    
+
     ax.set_title(f"System: {system} (#P={system_df['num_performances'].max()})")
-    
+
     if idx >= num_cols:
         ax.set_xlabel("Number of Configurations")
     else:
         ax.set_xlabel("")
-    
+
     # Only show y-axis label for plots in the first column
     if idx % num_cols == 0:
         ax.set_ylabel("WCP Value")
     else:
         ax.set_ylabel("")
-    
+
     # Set integer ticks on x-axis with appropriate spacing
     x_min, x_max = ax.get_xlim()
     x_min = max(1, int(x_min))
     x_max = int(x_max) + 1
-    
+
     # Determine appropriate tick spacing based on range
     x_range = x_max - x_min
     if x_range <= 10:
@@ -611,10 +612,10 @@ for idx, system in enumerate(systems):
         step = 5
     else:
         step = 10
-        
+
     ax.set_xticks(range(x_min, x_max, step))
     ax.set_xticklabels([str(x) for x in range(x_min, x_max, step)])
-    
+
     ax.grid(True, linestyle="--", alpha=0.7)
 
 # Remove empty subplots if any
@@ -650,11 +651,80 @@ legend2 = axes[5].legend(
 plt.tight_layout()
 
 # Save the plot
-plt.savefig(
-    "../results/rq1_wcp_max_mean.pdf", dpi=300, bbox_inches="tight"
-)
+plt.savefig("../results/rq1_wcp_max_mean.pdf", dpi=300, bbox_inches="tight")
 
 # Display the plot
 plt.show()
+
+# %%
+
+
+# %%
+# Export combined_df as a JSON dictionary with hierarchy: system -> performances -> selected configs
+def export_combined_df_to_json(df, output_path):
+    # Create the hierarchical structure
+    result = {}
+
+    # Group by system, num_performances, and num_configs
+    for system in df["system"].unique():
+        result[system] = {}
+        system_df = df[df["system"] == system]
+
+        for num_perf in system_df["performances"].unique():
+            perf_key = str(num_perf)
+            result[system][perf_key] = {}
+            perf_df = system_df[system_df["performances"] == num_perf]
+
+            for _, row in perf_df.iterrows():
+                num_configs = row["num_configs"]
+                # Extract relevant data for each configuration
+                config_data = {
+                    "wcp_mean": float(row["wcp_mean"]),
+                    "wcp_max": float(row["wcp_max"]),
+                    "wcp_gap": float(row["wcp_gap"]),
+                    "optimization_target": row["optimization_target"],
+                }
+
+                # Add selected_configs if available and convert to list of integers
+                if "selected_configs" in row and not pd.isna(row["selected_configs"]):
+                    # Parse the string representation of the list
+                    if isinstance(row["selected_configs"], str):
+                        # Remove brackets and split by commas
+                        configs_str = row["selected_configs"].strip("[]")
+                        if configs_str:  # Check if not empty
+                            # Convert to list of integers, handling np.int64 representation
+                            config_list = []
+                            for x in configs_str.split(","):
+                                x = x.strip()
+                                # Handle case where value is like 'np.int64(56)'
+                                if "np.int64" in x:
+                                    # Extract the number inside parentheses
+                                    num_str = x.split("(")[1].split(")")[0]
+                                    config_list.append(int(num_str))
+                                else:
+                                    config_list.append(int(x))
+                            config_data["selected_configs"] = config_list
+                        else:
+                            config_data["selected_configs"] = []
+                    elif isinstance(row["selected_configs"], list):
+                        # Already a list, ensure all elements are integers
+                        config_data["selected_configs"] = [
+                            int(x) for x in row["selected_configs"]
+                        ]
+
+                result[system][perf_key][num_configs] = config_data
+
+    # Write to JSON file
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=2)
+
+    print(f"Exported data to {output_path}")
+
+
+# Export the data
+export_combined_df_to_json(
+    combined_df[combined_df["optimization_target"] == "both"],
+    "../results/ocs_results.json",
+)
 
 # %%
