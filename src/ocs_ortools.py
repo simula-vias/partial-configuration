@@ -85,9 +85,6 @@ def solve_min_sum_selection(
         max_objective = get_max_objective(y)
         objective = max_obj_scale_factor * max_objective + mean_objective
 
-    # if prev_obj_value is not None:
-    #     solver.Add(objective <= prev_obj_value)
-
     solver.Minimize(objective)
 
     # Constraints
@@ -115,6 +112,9 @@ def solve_min_sum_selection(
     # Warm start if previous solution provided
     if prev_solution is not None:
         solver.SetHint(x, [1 if i in prev_solution else 0 for i in range(N)])
+
+    if prev_obj_value is not None:
+        solver.Add(objective <= prev_obj_value)
 
     solver.SetNumThreads(num_threads)
 
@@ -263,10 +263,20 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
 
             console.print(table)
 
+            # TODO The lower bound is obviously to pick all configurations?!?!?
+            # And this we can calculate beforehand from the dataset.
+            # Am I stupid? 
+            # At the same time, OR-Tools figured that out quite qickly during search anyway
+
             # This is not a reliable stopping criterion for max
             # For wcp_max, we can have iterations without improvement,
             # because we must first cover all worst-case items through more configs
-            if optimization_target != "max" and num_configs >= 2 and input_cost == results[-2]["input_cost"]:
+            if (
+                optimization_target != "max"
+                and num_configs >= 2
+                and len(results) >= 2
+                and input_cost == results[-2]["input_cost"]
+            ):
                 print(f"\nNo improvement after {num_configs} configs")
                 break
 
@@ -359,7 +369,7 @@ def main():
         "--system",
         type=str,
         help="Name of the system to analyze",
-        default="lingeling",
+        default="gcc",
     )
     parser.add_argument(
         "-ot",
