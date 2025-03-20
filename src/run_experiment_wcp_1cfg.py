@@ -3,6 +3,7 @@ import itertools
 import json
 from pathlib import Path
 
+from gosdt import GOSDTClassifier
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -23,7 +24,7 @@ from common import (
 # %%
 data_dir = Path("../data")
 random_state = 1234
-classifier = "rf"  # "dt", "rf"
+classifier = "gosdt"  # "dt", "rf"
 
 systems = json.load(open(data_dir / "metadata.json")).keys()
 
@@ -166,6 +167,12 @@ for s in systems:
                     "criterion": ["entropy", "gini"],
                 }
                 clf = DecisionTreeClassifier()
+            elif classifier == "gosdt":
+                parameter_grid = {
+                    "regularization": [ 0.1, 1, 10],
+                    "depth_budget": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                }
+                clf = GOSDTClassifier()
             else:
                 parameter_grid = {
                     "n_estimators": [2, 4, 8, 12, 16],  # range(1, 100, 10),
@@ -175,13 +182,13 @@ for s in systems:
                 }
                 clf = RandomForestClassifier()
 
-            clf = GridSearchCV(
-                clf,
-                parameter_grid,
-                cv=KFold(n_splits=4, random_state=random_state, shuffle=True),
-                n_jobs=-1,
-                refit=True,
-            )
+            # clf = GridSearchCV(
+            #     clf,
+            #     parameter_grid,
+            #     cv=KFold(n_splits=4, random_state=random_state, shuffle=True),
+            #     n_jobs=-1,
+            #     refit=True,
+            # )
             clf.fit(X, y)
 
             split_result = {
@@ -189,7 +196,7 @@ for s in systems:
                 "split": split_idx,
                 "classifier": classifier,
                 "performances": "-".join(all_performances),
-                **clf.best_params_,
+                # **clf.best_params_,
             }
 
             X_test = input_preprocessor.transform(
@@ -199,18 +206,24 @@ for s in systems:
 
             sdc_wcp = eval_prediction(pred_cfg)
 
-            best_clf = clf.best_estimator_
+            
 
             if classifier == "dt":
+                best_clf = clf.best_estimator_
                 num_leaf_nodes = get_leaf_values(best_clf.tree_).shape[0]
                 num_predictable_configs = best_clf.n_classes_
                 max_depth = best_clf.get_depth()
             elif classifier == "rf":
+                best_clf = clf.best_estimator_
                 num_leaf_nodes = sum(
                     get_leaf_values(est.tree_).shape[0] for est in best_clf.estimators_
                 )
                 num_predictable_configs = best_clf.n_classes_
                 max_depth = max(est.get_depth() for est in best_clf.estimators_)
+            else:
+                num_leaf_nodes = 0
+                num_predictable_configs = 0
+                max_depth = 0
 
             num_total_configs = perf_matrix.configurationID.nunique()
 
@@ -239,17 +252,17 @@ for s in systems:
 
             result_list_dict.append(split_result)
 
-            if s == "gcc" and all_performances == ["exec"]:
-                break
-        if s == "gcc" and all_performances == ["exec"]:
-            break
-    if s == "gcc" and all_performances == ["exec"]:
-        break
+    #         if s == "gcc" and all_performances == ["exec"]:
+    #             break
+    #     if s == "gcc" and all_performances == ["exec"]:
+    #         break
+    # if s == "gcc" and all_performances == ["exec"]:
+    #     break
 
         print("")
 # %%
 baseline_df = pd.DataFrame(result_list_dict)
-baseline_df.to_csv("../results/wcp_1cfg.csv", index=False)
+baseline_df.to_csv(f"../results/wcp_1cfg_{classifier}.csv", index=False)
 
 # %%
 
