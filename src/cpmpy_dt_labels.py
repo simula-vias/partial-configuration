@@ -247,36 +247,26 @@ class DecisionTreeTrainerCP:
 
         return result
 
-    def add_cost_objective(self, X, cost_matrix):
-        """Add cost objective for the training data using a cost matrix"""
-        # Create variables to track the cost for each sample
-        sample_costs = []
+    def add_accuracy_objective(self, X, y):
+        """Add accuracy objective for the training data using class labels"""
+        # Create variables to track correct predictions for each sample
+        correct_predictions = []
 
         for i, sample in enumerate(X):
             prediction = self.encode_prediction(sample)
+            
+            # Create a variable that is 1 if prediction is correct, 0 otherwise
+            is_correct = BoolVar(name=f"correct_{i}")
+            
+            # Prediction is correct if it equals the true label
+            self.model += is_correct == (prediction == y[i])
+            
+            correct_predictions.append(is_correct)
 
-            # Create a variable for the cost of this sample
-            sample_cost = IntVar(0, int(np.max(cost_matrix) * 100), name=f"cost_{i}")
+        # Total accuracy is the sum of all correct predictions
+        total_accuracy = sum(correct_predictions)
 
-            # For each possible class, add a constraint that if this class is predicted,
-            # the sample cost equals the corresponding cost from the cost matrix
-            cost_constraints = []
-            for class_idx in range(self.n_classes):
-                # Scale costs by 100 to work with integer variables
-                scaled_cost = int(cost_matrix[i, class_idx] * 100)
-                cost_constraints.append(
-                    ((prediction == class_idx) & (sample_cost == scaled_cost))
-                )
-
-            # One of these constraints must be true
-            self.model += any(cost_constraints)
-
-            sample_costs.append(sample_cost)
-
-        # Total cost is the sum of all sample costs
-        total_cost = sum(sample_costs)
-
-        return total_cost
+        return total_accuracy
 
     def add_regularization_terms(self):
         """Create regularization terms for the objective function"""
@@ -298,10 +288,10 @@ class DecisionTreeTrainerCP:
 
         return regularization
 
-    def train(self, X, cost_matrix):
-        """Train the decision tree using CPMpy with a cost matrix"""
+    def train(self, X, y):
+        """Train the decision tree using CPMpy with class labels"""
         n_features = X.shape[1]
-        n_classes = cost_matrix.shape[1]
+        n_classes = len(np.unique(y))
 
         if self.max_classes is not None and self.max_classes > n_classes:
             print(f"Warning: max_classes ({self.max_classes}) is greater than number of classes ({n_classes})")
@@ -327,7 +317,7 @@ class DecisionTreeTrainerCP:
         for attempt in range(3):
             try:
                 self.create_tree_variables(n_features, n_classes, X)
-                total_cost = self.add_cost_objective(X, cost_matrix)
+                total_accuracy = self.add_accuracy_objective(X, y)
                 regularization = self.add_regularization_terms()
                 
                 # Add constraints to force diversity in predictions
@@ -346,8 +336,8 @@ class DecisionTreeTrainerCP:
                 # Ensure at least min_classes are used
                 self.model += sum(class_used) >= min_classes
                 
-                # Scale regularization to be a small fraction of the cost
-                self.model.minimize(100000 * total_cost + regularization)
+                # Maximize accuracy with regularization
+                self.model.maximize(100000 * total_accuracy - regularization)
                 
                 # Set a time limit for solving (in seconds)
                 status = self.model.solve(time_limit=300)  # 5 minutes time limit
@@ -381,7 +371,7 @@ class DecisionTreeTrainerCP:
         self.max_depth = 2
         self.model = Model()
         self.create_tree_variables(n_features, n_classes, X)
-        total_cost = self.add_cost_objective(X, cost_matrix)
+        total_accuracy = self.add_accuracy_objective(X, y)
         
         # Still enforce class diversity in the fallback solution
         class_used = []
@@ -395,7 +385,7 @@ class DecisionTreeTrainerCP:
         # Ensure at least 2 classes are used
         self.model += sum(class_used) >= min(2, n_classes)
         
-        self.model.minimize(total_cost)
+        self.model.maximize(total_accuracy)
         status = self.model.solve()
         
         if not status:
@@ -484,12 +474,18 @@ class DecisionTreeTrainerCP:
         return np.array(predictions)
 
     def evaluate_cost(self, X, cost_matrix, tree):
-        """Evaluate the total cost of predictions"""
+        """Evaluate the total cost of predictions using a cost matrix"""
         predictions = self.predict(X, tree)
         total_cost = 0
         for i, pred in enumerate(predictions):
             total_cost += cost_matrix[i, pred]
         return total_cost/X.shape[0]
+
+    def evaluate_accuracy(self, X, y, tree):
+        """Evaluate the accuracy of predictions"""
+        predictions = self.predict(X, tree)
+        correct = (predictions == y).sum()
+        return correct / len(y)
 
 
 # %%
@@ -510,7 +506,10 @@ def run_example():
         ]
     )
 
-    # Create a cost matrix (n_samples x n_classes)
+    # Create class labels
+    y = np.array([0, 1, 2, 1, 0, 1])
+
+    # Create a cost matrix (n_samples x n_classes) for evaluation
     # Lower values indicate preferred classes for each sample
     cost_matrix = np.array(
         [
@@ -533,7 +532,9 @@ def run_example():
         categorical_features=categorical_features,
         no_reuse_features=True,
     )
-    tree = trainer.train(X, cost_matrix)
+    
+    # Train using class labels
+    tree = trainer.train(X, y)
 
     print("Trained decision tree:", tree)
     print("\nFeatures used:", tree["metadata"]["used_features"])
@@ -544,7 +545,11 @@ def run_example():
     print("Categorical features:", tree["metadata"]["categorical_features"])
     print("No feature reuse:", tree["metadata"]["no_reuse_features"])
 
-    # Evaluate
+    # Evaluate accuracy
+    accuracy = trainer.evaluate_accuracy(X, y, tree)
+    print("\nAccuracy of predictions:", accuracy)
+
+    # Evaluate cost (for comparison)
     total_cost = trainer.evaluate_cost(X, cost_matrix, tree)
     print("\nTotal cost of predictions:", total_cost)
 
@@ -552,9 +557,9 @@ def run_example():
     predictions = trainer.predict(X, tree)
     print("\nPredictions:", predictions)
 
-    # Show cost for each prediction
+    # Show accuracy and cost for each prediction
     for i, pred in enumerate(predictions):
-        print(f"Sample {i}: predicted class {pred}, cost {cost_matrix[i, pred]}")
+        print(f"Sample {i}: true class {y[i]}, predicted class {pred}, correct: {y[i] == pred}, cost {cost_matrix[i, pred]}")
 
 
 # run_example()
@@ -622,11 +627,11 @@ test_perf = perf_matrix[perf_matrix.inputname.isin(test_inp)]
 
 features = train_perf[input_features.columns].drop_duplicates()
 
-# TODO Validate correct order of matrices
+# Transform features
 X = input_preprocessor.fit_transform(features)
-
 feature_names = input_preprocessor.get_feature_names_out()
 
+# Create cost matrix for evaluation
 C = (
     perf_matrix[perf_matrix.inputname.isin(train_inp)][
         ["inputname", "configurationID", "worst_case_performance"]
@@ -641,18 +646,18 @@ C = (
     .values
 )
 
-# Load the data
+# Create class labels (best configuration for each input)
+y = np.argmin(C, axis=1)
 
-# %%
-
+# Train the model
 trainer = DecisionTreeTrainerCP(
-    max_depth=2, #X.shape[1],
+    max_depth=2,
     max_classes=5,
     categorical_features=[],
     no_reuse_features=True,
     feature_names=feature_names,
 )
-tree = trainer.train(X, C)
+tree = trainer.train(X, y)
 
 print("Trained decision tree:", tree)
 print("\nFeatures used:", tree["metadata"]["used_features"])
@@ -663,7 +668,11 @@ print("Class distribution:", tree["metadata"]["class_distribution"])
 print("Categorical features:", tree["metadata"]["categorical_features"])
 print("No feature reuse:", tree["metadata"]["no_reuse_features"])
 
-# Evaluate
+# Evaluate accuracy
+accuracy = trainer.evaluate_accuracy(X, y, tree)
+print("\nAccuracy of predictions:", accuracy)
+
+# Evaluate cost
 total_cost = trainer.evaluate_cost(X, C, tree)
 print("\nTotal cost of predictions:", total_cost)
 
@@ -671,8 +680,8 @@ print("\nTotal cost of predictions:", total_cost)
 predictions = trainer.predict(X, tree)
 print("\nPredictions:", predictions)
 
-# Show cost for each prediction
+# Show accuracy and cost for each prediction
 for i, pred in enumerate(predictions):
-    print(f"Sample {i}: predicted class {pred}, cost {C[i, pred]}")
+    print(f"Sample {i}: true best config {y[i]}, predicted config {pred}, correct: {y[i] == pred}, cost {C[i, pred]}")
 
 # %%
