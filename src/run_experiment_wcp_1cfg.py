@@ -2,8 +2,9 @@
 import itertools
 import json
 from pathlib import Path
+import time
 
-from gosdt import GOSDTClassifier
+import gosdt
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -12,7 +13,7 @@ from sklearn.model_selection import (
     GridSearchCV,
     KFold,
 )
-from sklearn.preprocessing import LabelEncoder, scale
+from sklearn.preprocessing import KBinsDiscretizer, LabelEncoder, scale
 from sklearn.tree import DecisionTreeClassifier
 
 from common import (
@@ -22,7 +23,7 @@ from common import (
 )
 
 # %%
-data_dir = Path("../data")
+data_dir = Path("./data")
 random_state = 1234
 classifier = "gosdt"  # "dt", "rf"
 
@@ -30,6 +31,9 @@ systems = json.load(open(data_dir / "metadata.json")).keys()
 
 result_list_dict = []
 for s in systems:
+    if s in ("lingeling", "nodejs"):
+        continue
+
     print(s)
     (
         perf_matrix_initial,
@@ -53,6 +57,10 @@ for s in systems:
 
     for all_performances in all_perf_list:
         num_p = len(all_performances)
+        print(f"start {num_p} perf: {all_performances}")
+
+        # if all_performances != ["cps"]:
+        #     continue
 
         # We can normalize before splitting, because
         # we normalize per input and we also split per input.
@@ -88,7 +96,7 @@ for s in systems:
         )
 
         ### From here we must split the data
-        splits = 5
+        splits = 4
         kf_inp = KFold(n_splits=splits, random_state=random_state, shuffle=True)
 
         inputnames = perf_matrix["inputname"].unique()
@@ -172,7 +180,17 @@ for s in systems:
                     "regularization": [ 0.1, 1, 10],
                     "depth_budget": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                 }
-                clf = GOSDTClassifier()
+                # Earlier segmentation fault was probably due to constant features
+                # Must be more careful with preprocessing
+                clf = gosdt.GOSDTClassifier(verbose=True)
+                # Xenc = gosdt.NumericBinarizer()
+                # Xenc = gosdt.ThresholdGuessBinarizer()
+                # X_bin = Xenc.set_output(transform='pandas').fit_transform(X, y)
+                # X_bin = KBinsDiscretizer(n_bins=5, encode="onehot-dense").fit_transform(X)
+                # print(X_bin.shape)
+                # clf = DecisionTreeClassifier()
+                # TODO cost_matrix
+                print(icm.shape, X.shape, np.unique(y).shape)
             else:
                 parameter_grid = {
                     "n_estimators": [2, 4, 8, 12, 16],  # range(1, 100, 10),
@@ -189,7 +207,9 @@ for s in systems:
             #     n_jobs=-1,
             #     refit=True,
             # )
-            clf.fit(X, y)
+            print(f"start fit idx {split_idx}")
+            clf.fit(X, y)  # debug where the fault appears
+            print(f"done fit idx {split_idx}")
 
             split_result = {
                 "system": s,
@@ -258,8 +278,9 @@ for s in systems:
     #         break
     # if s == "gcc" and all_performances == ["exec"]:
     #     break
-
-        print("")
+        print("done-2")
+    print("done-1")
+print("done")
 # %%
 baseline_df = pd.DataFrame(result_list_dict)
 baseline_df.to_csv(f"../results/wcp_1cfg_{classifier}.csv", index=False)
