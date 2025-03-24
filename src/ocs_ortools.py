@@ -1,5 +1,6 @@
 import argparse
 import csv
+import json
 from pathlib import Path
 
 import numpy as np
@@ -233,6 +234,16 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
             wcp_mean = float(cip.loc[real_configs].min(axis=0).mean())
             wcp_max = float(cip.loc[real_configs].min(axis=0).max())
 
+            # Determine which configuration is best for each input
+            # For each input, find the configuration with the minimum performance value
+            selected_configs_df = cip.loc[real_configs]
+            input_to_config_map = {}
+
+            for input_name in selected_configs_df.columns:
+                # Find the configuration with the minimum performance value for this input
+                best_config = selected_configs_df[input_name].idxmin()
+                input_to_config_map[input_name] = best_config
+
             iter_result = {
                 "system": system,
                 "num_performances": len(performances),
@@ -243,6 +254,7 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
                 "wcp_mean": wcp_mean,
                 "wcp_max": wcp_max,
                 "optimization_target": optimization_target,
+                "input_to_config_map": input_to_config_map,
             }
             results.append(iter_result)
 
@@ -265,7 +277,7 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
 
             # TODO The lower bound is obviously to pick all configurations?!?!?
             # And this we can calculate beforehand from the dataset.
-            # Am I stupid? 
+            # Am I stupid?
             # At the same time, OR-Tools figured that out quite qickly during search anyway
 
             # This is not a reliable stopping criterion for max
@@ -284,13 +296,15 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
 
 
 def save_results(results, system, output_dir="results"):
-    """Save results to a CSV file"""
+    """Save results to CSV and JSON files"""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    # Create filename based on system and optimization target
+    # Create filenames based on system and optimization target
     opt_target = results[0]["optimization_target"]
-    filename = f"ocs_{system}_{opt_target}.csv"
-    filepath = Path(output_dir) / filename
+    csv_filename = f"ocs_{system}_{opt_target}.csv"
+    json_filename = f"ocs_{system}_{opt_target}.json"
+    csv_filepath = Path(output_dir) / csv_filename
+    json_filepath = Path(output_dir) / json_filename
 
     # Prepare results for CSV
     csv_results = []
@@ -305,16 +319,44 @@ def save_results(results, system, output_dir="results"):
             "wcp_mean": result["wcp_mean"],
             "wcp_max": result["wcp_max"],
             "optimization_target": result["optimization_target"],
+            "input_to_config_map": str(result["input_to_config_map"]),
         }
         csv_results.append(row)
 
     # Write to CSV
-    with open(filepath, "w", newline="") as f:
+    with open(csv_filepath, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=csv_results[0].keys())
         writer.writeheader()
         writer.writerows(csv_results)
 
-    print(f"Results saved to {filepath}")
+    # Prepare results for JSON
+    # We need to convert some non-serializable types to serializable ones
+    json_results = []
+    for result in results:
+        # Create a copy of the result to avoid modifying the original
+        json_result = result.copy()
+        
+        # Convert numpy arrays and other non-serializable types to lists
+        if isinstance(json_result["performances"], np.ndarray):
+            json_result["performances"] = json_result["performances"].tolist()
+        
+        # Convert selected_configs to list if it's not already
+        if not isinstance(json_result["selected_configs"], list):
+            json_result["selected_configs"] = list(json_result["selected_configs"])
+            
+        # Ensure all keys in input_to_config_map are strings for JSON compatibility
+        input_to_config_map = {}
+        for k, v in json_result["input_to_config_map"].items():
+            input_to_config_map[str(k)] = v
+        json_result["input_to_config_map"] = input_to_config_map
+        
+        json_results.append(json_result)
+
+    # Write to JSON
+    with open(json_filepath, "w") as f:
+        json.dump(json_results, f, indent=2)
+
+    print(f"Results saved to {csv_filepath} and {json_filepath}")
 
 
 def print_results(results):
