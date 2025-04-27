@@ -1,31 +1,28 @@
 import argparse
 import csv
+import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from ortools.linear_solver import pywraplp
 from rich import box
 from rich.console import Console
 from rich.table import Table
-from sklearn.model_selection import KFold
 
-from common import load_data
+from common import load_data, NpEncoder
+from create_splits import read_splits
 from ocs_ortools import solve_min_sum_selection
 
 
-def find_optimal_configurations_cv(
-    system, optimization_target="mean", num_threads=1, n_splits=5, random_state=42
-):
+def find_optimal_configurations_cv(system, optimization_target="mean", num_threads=1):
     """
     Find optimal configurations using cross-validation for a given system and performance metrics.
+    Uses pre-defined splits from data/splits.json.
 
     Args:
         system (str): Name of the system to analyze
         optimization_target (str): Type of optimization - either 'mean' or 'max'
         num_threads (int): Number of threads to use for solving
-        n_splits (int): Number of folds for cross-validation
-        random_state (int): Random seed for reproducibility
 
     Returns:
         list: List of dictionaries containing results for each configuration count and fold
@@ -42,10 +39,16 @@ def find_optimal_configurations_cv(
 
     results = []
     console = Console()
-    scaling_factor = 100_000
+    scaling_factor = 10_000
 
-    # Create KFold cross-validator
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    # Load pre-defined splits from splits.json
+    try:
+        splits = read_splits(system, filepath="./data/splits.json")
+        n_splits = len(splits)
+        print(f"Loaded {n_splits} pre-defined splits for {system} from splits.json")
+    except Exception as e:
+        print(f"Error loading splits: {str(e)}")
+        return []
 
     for num_performances in range(1, len(all_performances) + 1):
         performances = all_performances[:num_performances]
@@ -81,14 +84,16 @@ def find_optimal_configurations_cv(
         # Setup optimization parameters
         max_configs = cip.shape[0]
 
-        # Perform cross-validation
+        # Perform cross-validation using pre-defined splits
         fold_idx = 1
-        for train_idx, test_idx in kf.split(cip.columns):
+        for train_inputs_list, test_inputs_list in splits:
             print(f"\nProcessing fold {fold_idx}/{n_splits}")
 
-            # Split data into train and test sets
-            train_inputs = cip.columns[train_idx]
-            test_inputs = cip.columns[test_idx]
+            # Filter inputs that exist in the dataset
+            train_inputs = [inp for inp in train_inputs_list if inp in cip.columns]
+            test_inputs = [inp for inp in test_inputs_list if inp in cip.columns]
+
+            print(f"Train inputs: {len(train_inputs)}, Test inputs: {len(test_inputs)}")
 
             # Create training matrix
             train_matrix = (
@@ -100,9 +105,21 @@ def find_optimal_configurations_cv(
             if optimization_target == "mean":
                 seed_cfg = train_matrix.mean(axis=1).argmin()
                 seed_obj_value = train_matrix.mean(axis=1).min() * train_matrix.shape[1]
-            else:
+            elif optimization_target == "max":
                 seed_cfg = train_matrix.max(axis=1).argmin()
                 seed_obj_value = train_matrix.max(axis=1).min()
+            else:
+                # For "both" optimization target, start with the max optimization
+                seed_cfg = train_matrix.max(axis=1).argmin()
+                max_mean_value = scaling_factor * train_matrix.shape[0]
+                max_obj_scale_factor = scaling_factor
+                while max_obj_scale_factor < max_mean_value:
+                    max_obj_scale_factor *= 10
+
+                max_value = train_matrix.max(axis=1).min()
+                mean_value = train_matrix.mean(axis=1).min() * train_matrix.shape[1]
+                seed_obj_value = max_obj_scale_factor * max_value + mean_value
+                seed_obj_value = None
 
             indices = [k for k, v in cfg_map.items() if v == seed_cfg]
             obj_value = seed_obj_value
@@ -120,12 +137,10 @@ def find_optimal_configurations_cv(
                     prev_solution=indices,
                     prev_obj_value=obj_value,
                     num_threads=num_threads,
+                    scaling_factor=scaling_factor,
                 )
 
-                if optimization_target == "mean":
-                    train_cost = obj_value / train_matrix.shape[1] / scaling_factor
-                else:
-                    train_cost = obj_value / scaling_factor
+                train_cost = obj_value
 
                 # Extract results and evaluate on test set
                 real_configs = [cfg_map[i] for i in indices]
@@ -146,6 +161,17 @@ def find_optimal_configurations_cv(
                     cip.loc[real_configs][test_inputs].min(axis=0).max()
                 )
 
+                # Determine which configuration is best for each input
+                # For each input, find the configuration with the minimum performance value
+                selected_configs_df = cip.loc[real_configs]
+                input_to_config_map = {}
+
+                for input_name in selected_configs_df.columns:
+                    if input_name in train_inputs:
+                        # Find the configuration with the minimum performance value for this input
+                        best_config = selected_configs_df[input_name].idxmin()
+                        input_to_config_map[input_name] = best_config
+
                 iter_result = {
                     "system": system,
                     "num_performances": len(performances),
@@ -153,12 +179,15 @@ def find_optimal_configurations_cv(
                     "num_configs": num_configs,
                     "selected_configs": real_configs,
                     "fold": fold_idx,
+                    "train_inputs": train_inputs,
+                    "test_inputs": test_inputs,
                     "train_cost": train_cost,
                     "train_wcp_mean": train_wcp_mean,
                     "train_wcp_max": train_wcp_max,
                     "test_wcp_mean": test_wcp_mean,
                     "test_wcp_max": test_wcp_max,
                     "optimization_target": optimization_target,
+                    "input_to_config_map": input_to_config_map,
                 }
                 results.append(iter_result)
 
@@ -180,12 +209,16 @@ def find_optimal_configurations_cv(
 
                 console.print(table)
 
-                # Stop if we've reached optimal performance on training set
-                target_metric = (
-                    train_wcp_mean if optimization_target == "mean" else train_wcp_max
-                )
-                if (obj_value == last_obj_value) or (target_metric < 0.00001):
-                    print(f"\nFound optimal assignment with {num_configs} configs")
+                # This is not a reliable stopping criterion for max
+                # For wcp_max, we can have iterations without improvement,
+                # because we must first cover all worst-case items through more configs
+                if (
+                    optimization_target != "max"
+                    and num_configs >= 2
+                    and len(results) >= 2
+                    and obj_value == last_obj_value
+                ):
+                    print(f"\nNo improvement after {num_configs} configs")
                     break
 
                 last_obj_value = obj_value
@@ -196,13 +229,15 @@ def find_optimal_configurations_cv(
 
 
 def save_results(results, system, output_dir="results"):
-    """Save results to a CSV file"""
+    """Save results to CSV and JSON files"""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    # Create filename based on system and optimization target
+    # Create filenames based on system and optimization target
     opt_target = results[0]["optimization_target"]
-    filename = f"ocs_{system}_{opt_target}_cv.csv"
-    filepath = Path(output_dir) / filename
+    csv_filename = f"ocs_{system}_{opt_target}_cv.csv"
+    json_filename = f"ocs_{system}_{opt_target}_cv.json"
+    csv_filepath = Path(output_dir) / csv_filename
+    json_filepath = Path(output_dir) / json_filename
 
     # Prepare results for CSV
     csv_results = []
@@ -220,16 +255,44 @@ def save_results(results, system, output_dir="results"):
             "test_wcp_mean": result["test_wcp_mean"],
             "test_wcp_max": result["test_wcp_max"],
             "optimization_target": result["optimization_target"],
+            "input_to_config_map": str(result["input_to_config_map"]),
         }
         csv_results.append(row)
 
     # Write to CSV
-    with open(filepath, "w", newline="") as f:
+    with open(csv_filepath, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=csv_results[0].keys())
         writer.writeheader()
         writer.writerows(csv_results)
 
-    print(f"Results saved to {filepath}")
+    # Prepare results for JSON
+    # We need to convert some non-serializable types to serializable ones
+    json_results = []
+    for result in results:
+        # Create a copy of the result to avoid modifying the original
+        json_result = result.copy()
+
+        # Convert numpy arrays and other non-serializable types to lists
+        if isinstance(json_result["performances"], np.ndarray):
+            json_result["performances"] = json_result["performances"].tolist()
+
+        # Convert selected_configs to list if it's not already
+        if not isinstance(json_result["selected_configs"], list):
+            json_result["selected_configs"] = list(json_result["selected_configs"])
+
+        # Ensure all keys in input_to_config_map are strings for JSON compatibility
+        input_to_config_map = {}
+        for k, v in json_result["input_to_config_map"].items():
+            input_to_config_map[str(k)] = v
+        json_result["input_to_config_map"] = input_to_config_map
+
+        json_results.append(json_result)
+
+    # Write to JSON
+    with open(json_filepath, "w") as f:
+        json.dump(json_results, f, indent=2, cls=NpEncoder)
+
+    print(f"Results saved to {csv_filepath} and {json_filepath}")
 
 
 def print_results(results):
@@ -291,22 +354,22 @@ def print_results(results):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Find optimal configurations using cross-validation"
+        description="Find optimal configurations using cross-validation with pre-defined splits"
     )
     parser.add_argument(
         "-s",
         "--system",
         type=str,
         help="Name of the system to analyze",
-        default="nodejs",
+        default="gcc",
     )
     parser.add_argument(
         "-ot",
         "--optimize_type",
         type=str,
-        choices=["mean", "max"],
+        choices=["mean", "max", "both"],
         help="Type of optimization to perform",
-        default="mean",
+        default="both",
     )
     parser.add_argument(
         "-t",
@@ -315,20 +378,6 @@ def main():
         help="Number of threads to use for solving",
         default=1,
     )
-    parser.add_argument(
-        "-k",
-        "--folds",
-        type=int,
-        help="Number of folds for cross-validation",
-        default=4,
-    )
-    parser.add_argument(
-        "-r",
-        "--random_state",
-        type=int,
-        help="Random seed for reproducibility",
-        default=42,
-    )
 
     args = parser.parse_args()
 
@@ -336,8 +385,6 @@ def main():
         args.system,
         args.optimize_type,
         num_threads=args.threads,
-        n_splits=args.folds,
-        random_state=args.random_state,
     )
     print_results(results)
     save_results(results, args.system)
