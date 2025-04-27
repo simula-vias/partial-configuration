@@ -7,8 +7,20 @@ from scipy import stats
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import KFold, train_test_split
 from sklearn.multioutput import _MultiOutputEstimator
-from sklearn.preprocessing import OneHotEncoder, PolynomialFeatures
+from sklearn.preprocessing import OneHotEncoder
 from sklearn.base import ClassifierMixin
+
+
+class NpEncoder(json.JSONEncoder):
+    # https://stackoverflow.com/questions/50916422/python-typeerror-object-of-type-int64-is-not-json-serializable
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NpEncoder, self).default(obj)
 
 
 def find_files(path, ext="csv"):

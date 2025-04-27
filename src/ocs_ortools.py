@@ -10,7 +10,7 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 
-from common import load_data
+from common import load_data, NpEncoder
 
 
 def solve_min_sum_selection(
@@ -207,9 +207,12 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
         if optimization_target == "mean":
             seed_cfg = cip_np.mean(axis=1).argmin()
             seed_obj_value = cip_np.mean(axis=1).min() * cip_np.shape[1]
-        else:
+        elif optimization_target == "max":
             seed_cfg = cip_np.max(axis=1).argmin()
             seed_obj_value = cip_np.max(axis=1).min()
+        else:
+            seed_cfg = None
+            seed_obj_value = None
 
         indices = [k for k, v in cfg_map.items() if v == seed_cfg]
         obj_value = seed_obj_value
@@ -335,26 +338,26 @@ def save_results(results, system, output_dir="results"):
     for result in results:
         # Create a copy of the result to avoid modifying the original
         json_result = result.copy()
-        
+
         # Convert numpy arrays and other non-serializable types to lists
         if isinstance(json_result["performances"], np.ndarray):
             json_result["performances"] = json_result["performances"].tolist()
-        
+
         # Convert selected_configs to list if it's not already
         if not isinstance(json_result["selected_configs"], list):
             json_result["selected_configs"] = list(json_result["selected_configs"])
-            
+
         # Ensure all keys in input_to_config_map are strings for JSON compatibility
         input_to_config_map = {}
         for k, v in json_result["input_to_config_map"].items():
             input_to_config_map[str(k)] = v
         json_result["input_to_config_map"] = input_to_config_map
-        
+
         json_results.append(json_result)
 
     # Write to JSON
     with open(json_filepath, "w") as f:
-        json.dump(json_results, f, indent=2)
+        json.dump(json_results, f, indent=2, cls=NpEncoder)
 
     print(f"Results saved to {csv_filepath} and {json_filepath}")
 
