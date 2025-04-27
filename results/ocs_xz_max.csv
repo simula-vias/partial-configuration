@@ -1,0 +1,6 @@
+system,num_performances,performances,num_configs,selected_configs,input_cost,wcp_mean,wcp_max,optimization_target
+xz,1,['size'],1,[np.int64(27)],0.0002,3.5535968350179035e-06,0.00017057264808085937,max
+xz,1,['size'],2,"[np.int64(27), np.int64(29)]",0.0,0.0,0.0,max
+xz,2,"['size', 'time']",1,[np.int64(29)],0.9839,0.7195082790114805,0.9838709677419355,max
+xz,2,"['size', 'time']",2,"[np.int64(3), np.int64(21)]",0.983,0.6688164552605164,0.9830069124423962,max
+xz,2,"['size', 'time']",3,"[np.int64(0), np.int64(3), np.int64(21)]",0.983,0.6688164552605164,0.9830069124423962,max
