@@ -97,39 +97,48 @@ for c, count in zip(unique_classes, class_counts):
 
 # dataset = np.genfromtext("anneal.txt", delimiter=" ")
 
-discretizer = KBinsDiscretizer(n_bins=3, encode="onehot")
-X_bin = discretizer.fit_transform(X).toarray()
-
+# discretizer = KBinsDiscretizer(n_bins=3, encode="onehot")
+# X_bin = discretizer.fit_transform(X).toarray()
+X_bin = X
+# %%
 
 # Parameters
 GBDT_N_EST = 4
-GBDT_MAX_DEPTH = 4
-REGULARIZATION = 0.00 #001
+GBDT_MAX_DEPTH = 40
+REGULARIZATION = 0.00  # 001
 SIMILAR_SUPPORT = False
 DEPTH_BUDGET = 60
 TIME_LIMIT = 3600
 VERBOSE = True
 
 # Train test split
-X_train, X_test, y_train, y_test = train_test_split(X_bin, y, test_size=0.2, random_state=2021)
+X_train, X_test, y_train, y_test = train_test_split(
+    X_bin, y, test_size=0.2, random_state=2021
+)
 print("X train shape:{}, X test shape:{}".format(X_train.shape, X_test.shape))
 
 # Step 1: Guess Thresholds
-X_train = pd.DataFrame(X_train, columns=feature_names)
-X_test = pd.DataFrame(X_test, columns=feature_names)
+X_train = pd.DataFrame(X_train)  # , columns=feature_names)
+X_test = pd.DataFrame(X_test)  # , columns=feature_names)
 
 print("Original feature names:", list(X_train.columns))
 print("Number of original features:", X_train.shape[1])
 
 
 # enc = ThresholdGuessBinarizer(n_estimators=GBDT_N_EST, max_depth=GBDT_MAX_DEPTH, random_state=2021)
-enc = NumericBinarizer()
-enc.set_output(transform="pandas")
-X_train_guessed = enc.fit_transform(X_train, y_train)
-X_test_guessed = enc.transform(X_test)
+# enc = NumericBinarizer()
+# enc.set_output(transform="pandas")
+# X_train_guessed = enc.fit_transform(X_train, y_train)
+# X_test_guessed = enc.transform(X_test)
+X_train_guessed = X_train.copy()
+X_test_guessed = X_test.copy()
 
-print(f"After guessing, X train shape:{X_train_guessed.shape}, X test shape:{X_test_guessed.shape}")
-print("train set column names == test set column names: {list(X_train_guessed.columns)==list(X_test_guessed.columns)}")
+print(
+    f"After guessing, X train shape:{X_train_guessed.shape}, X test shape:{X_test_guessed.shape}"
+)
+print(
+    "train set column names == test set column names: {list(X_train_guessed.columns)==list(X_test_guessed.columns)}"
+)
 print("Transformed feature names:", list(X_train_guessed.columns))
 print("Number of transformed features:", X_train_guessed.shape[1])
 
@@ -140,10 +149,26 @@ for col in X_train_guessed.columns:
     if len(unique_values) > 2:
         print(f"WARNING: Feature {col} has more than 2 unique values.")
 
+classes = np.unique(y_train)
+class_map = np.arange(len(classes))
+print("Classes:", classes)
+print("Class map:", class_map)
+
+y_train = np.array([class_map[np.where(classes == c)[0][0]] for c in y_train])
+# y_test = np.array([class_map[np.where(classes == c)[0][0]] for c in y_test])
+
 # Step 3: Train the GOSDT classifier
-clf = GOSDTClassifier(regularization=REGULARIZATION, similar_support=SIMILAR_SUPPORT, time_limit=TIME_LIMIT, depth_budget=DEPTH_BUDGET, verbose=VERBOSE) 
+clf = GOSDTClassifier(
+    regularization=1/y_train.shape[0],
+    similar_support=SIMILAR_SUPPORT,
+    time_limit=TIME_LIMIT,
+    depth_budget=DEPTH_BUDGET,
+    verbose=VERBOSE,
+)
 clf.fit(X_train_guessed, y_train)
 y_pred = clf.predict(X_train_guessed)
+
+y_pred = class_map[y_pred]
 
 # Step 4: Evaluate the model
 print("Evaluating the model, extracting tree and scores", flush=True)
@@ -151,20 +176,25 @@ print("Evaluating the model, extracting tree and scores", flush=True)
 
 print(f"Model training time: {clf.result_.time}")
 print(f"Training accuracy: {clf.score(X_train_guessed, y_train)}")
-print(f"Test accuracy: {clf.score(X_test_guessed, y_test)}")
+# print(f"Test accuracy: {clf.score(X_test_guessed, y_test)}")
 
 clf_sk = DecisionTreeClassifier(max_depth=1)
 clf_sk.fit(X_bin, y)
 y_pred_sk = clf_sk.predict(X_bin)
 
-
-# %%
 def evaluate_cost(y_pred, C):
     total_cost = 0
     for i, pred in enumerate(y_pred):
         total_cost += C[i, pred]
-    return total_cost/len(y_pred)
+    return total_cost / len(y_pred)
 
-print(y_pred,evaluate_cost(y_pred, C))
+
+print(y_pred, evaluate_cost(y_pred, C))
 print(y_pred_sk, evaluate_cost(y_pred_sk, C))
+
+# %%
+from odtlearn.flow_oct import FlowOCT
+from odtlearn.utils.binarize import binarize
+
+
 # %%
