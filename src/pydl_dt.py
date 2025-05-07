@@ -1,13 +1,15 @@
 # %%
 import numpy as np
 from sklearn.model_selection import train_test_split
-from gosdt import ThresholdGuessBinarizer, GOSDTClassifier, NumericBinarizer
-from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.preprocessing import KBinsDiscretizer
-from sklearn.tree import DecisionTreeClassifier
 from common import load_data
 import json
 import pandas as pd
+from pydl85 import DL85Predictor
+import time
+
+# TODO Merge this into `wip.py`; replace odtlearn because it is not cost-sensitive
+# Evaluate whether the results actually differ or if picking the argmin label would have been okay, too.
 
 random_state = 1234
 test_size = 0.40
@@ -66,7 +68,8 @@ test_inp = sorted(test_inp)
 train_perf = perf_matrix[perf_matrix.inputname.isin(train_inp)].copy()
 test_perf = perf_matrix[perf_matrix.inputname.isin(test_inp)]
 
-features = train_perf[input_features.columns].drop_duplicates()
+# features = train_perf[input_features.columns].drop_duplicates()
+features = perf_matrix[input_features.columns].drop_duplicates()
 
 # Transform features
 X = input_preprocessor.fit_transform(features)
@@ -74,7 +77,8 @@ feature_names = input_preprocessor.get_feature_names_out()
 
 # Create cost matrix for evaluation
 C = (
-    perf_matrix[perf_matrix.inputname.isin(train_inp)][
+    # perf_matrix[perf_matrix.inputname.isin(train_inp)][
+    perf_matrix[
         ["inputname", "configurationID", "worst_case_performance"]
     ]
     .reset_index()
@@ -86,115 +90,94 @@ C = (
     .drop(columns=["inputname"])
     .values
 )
-# Label each input with the configuration with the lowest WCP
-y = np.argmin(C, axis=1)
 
-# Print class distribution
-print("Class distribution:")
-unique_classes, class_counts = np.unique(y, return_counts=True)
-for c, count in zip(unique_classes, class_counts):
-    print(f"Class {c}: {count} ({100 * count / len(y):.2f}%)")
-
-# dataset = np.genfromtext("anneal.txt", delimiter=" ")
-
-# discretizer = KBinsDiscretizer(n_bins=3, encode="onehot")
-# X_bin = discretizer.fit_transform(X).toarray()
-X_bin = X
 # %%
 
-# Parameters
-GBDT_N_EST = 4
-GBDT_MAX_DEPTH = 40
-REGULARIZATION = 0.00  # 001
-SIMILAR_SUPPORT = False
-DEPTH_BUDGET = 60
-TIME_LIMIT = 3600
-VERBOSE = True
-
-# Train test split
-X_train, X_test, y_train, y_test = train_test_split(
-    X_bin, y, test_size=0.2, random_state=2021
-)
-print("X train shape:{}, X test shape:{}".format(X_train.shape, X_test.shape))
-
-# Step 1: Guess Thresholds
-X_train = pd.DataFrame(X_train)  # , columns=feature_names)
-X_test = pd.DataFrame(X_test)  # , columns=feature_names)
-
-print("Original feature names:", list(X_train.columns))
-print("Number of original features:", X_train.shape[1])
+# TODO compare with the odtree binarizer function
+discretizer = KBinsDiscretizer(n_bins=5, encode="onehot")
+X_bin = discretizer.fit_transform(X).toarray().astype(bool)
 
 
-# enc = ThresholdGuessBinarizer(n_estimators=GBDT_N_EST, max_depth=GBDT_MAX_DEPTH, random_state=2021)
-# enc = NumericBinarizer()
-# enc.set_output(transform="pandas")
-# X_train_guessed = enc.fit_transform(X_train, y_train)
-# X_test_guessed = enc.transform(X_test)
-X_train_guessed = X_train.copy()
-X_test_guessed = X_test.copy()
-
-print(
-    f"After guessing, X train shape:{X_train_guessed.shape}, X test shape:{X_test_guessed.shape}"
-)
-print(
-    "train set column names == test set column names: {list(X_train_guessed.columns)==list(X_test_guessed.columns)}"
-)
-print("Transformed feature names:", list(X_train_guessed.columns))
-print("Number of transformed features:", X_train_guessed.shape[1])
-
-# Check for unique values in transformed features
-for col in X_train_guessed.columns:
-    unique_values = X_train_guessed[col].unique()
-    print(f"Unique values in {col}: {unique_values}")
-    if len(unique_values) > 2:
-        print(f"WARNING: Feature {col} has more than 2 unique values.")
-
-classes = np.unique(y_train)
-class_map = np.arange(len(classes))
-print("Classes:", classes)
-print("Class map:", class_map)
-
-y_train = np.array([class_map[np.where(classes == c)[0][0]] for c in y_train])
-# y_test = np.array([class_map[np.where(classes == c)[0][0]] for c in y_test])
-
-# Step 3: Train the GOSDT classifier
-clf = GOSDTClassifier(
-    regularization=1/y_train.shape[0],
-    similar_support=SIMILAR_SUPPORT,
-    time_limit=TIME_LIMIT,
-    depth_budget=DEPTH_BUDGET,
-    verbose=VERBOSE,
-)
-clf.fit(X_train_guessed, y_train)
-y_pred = clf.predict(X_train_guessed)
-
-y_pred = class_map[y_pred]
-
-# Step 4: Evaluate the model
-print("Evaluating the model, extracting tree and scores", flush=True)
-
-
-print(f"Model training time: {clf.result_.time}")
-print(f"Training accuracy: {clf.score(X_train_guessed, y_train)}")
-# print(f"Test accuracy: {clf.score(X_test_guessed, y_test)}")
-
-clf_sk = DecisionTreeClassifier(max_depth=1)
-clf_sk.fit(X_bin, y)
-y_pred_sk = clf_sk.predict(X_bin)
+# %%
 
 def evaluate_cost(y_pred, C):
-    total_cost = 0
-    for i, pred in enumerate(y_pred):
-        total_cost += C[i, pred]
-    return total_cost / len(y_pred)
+    # print("y_pred", y_pred)
+    cost = C[np.arange(C.shape[0]), y_pred]
+    return cost.max(), cost.mean()
 
 
-print(y_pred, evaluate_cost(y_pred, C))
-print(y_pred_sk, evaluate_cost(y_pred_sk, C))
+def wcp_max_mean(C_sub):
+    wcp_max_per_config = C_sub.max(axis=0)
+    wcp_mean_per_config = C_sub.mean(axis=0)
+    wcp_per_config = 10_000 * wcp_max_per_config.round(4) + wcp_mean_per_config
+    return wcp_per_config
 
-# %%
-from odtlearn.flow_oct import FlowOCT
-from odtlearn.utils.binarize import binarize
+def wcp_mean(C_sub):
+    return C_sub.mean(axis=0)
+
+def wcp_max(C_sub):
+    return C_sub.max(axis=0)
+
+def get_dt_functions(mode, C, allowed_configs):
+    if mode == "max_mean" or mode =="both":
+        wcp_fn = wcp_max_mean
+    elif mode == "max":
+        wcp_fn = wcp_max
+    elif mode == "mean":
+        wcp_fn = wcp_mean
+    else:
+        raise ValueError("Invalid mode. Choose 'max_mean' (or 'both'), 'max', or 'mean'.")
+
+    if allowed_configs is None:
+        allowed_configs = np.arange(C.shape[1])
+
+    C_allowed = C[:, allowed_configs]
+
+    def leaf_value_fn(tids):
+        C_sub = C_allowed[list(tids)]  # (inputs in node, configs)
+        
+        wcp_per_config = wcp_fn(C_sub)
+        
+        label_offset = np.argmin(wcp_per_config)
+        label = allowed_configs[label_offset]
+        return label
+
+
+    def error_wcp_fn(tids):
+        C_sub = C_allowed[list(tids)]  # (inputs in node, configs)
+        
+        wcp_per_config = wcp_fn(C_sub)
+
+        error = wcp_per_config.min()
+        return error
+
+    return leaf_value_fn, error_wcp_fn
+
+optimization_target = res["optimization_target"]
+leaf_value_fn, error_fn = get_dt_functions(optimization_target, C, selected_configs)
+
+for d in range(1, X_bin.shape[1]):
+    clf = DL85Predictor(
+        max_depth=d,
+        error_function=error_fn,
+        leaf_value_function=leaf_value_fn,
+        time_limit=600,
+    )
+    start = time.perf_counter()
+    clf.fit(X_bin)
+    duration = time.perf_counter() - start
+
+    cost_max, cost_mean = evaluate_cost(clf.predict(X_bin), C)
+    print(f"Depth={d} wcp_max={cost_max:.5f} wcp_mean={cost_mean:.5f} Duration={duration:.4f}")
+    tree = clf.get_tree_without_transactions_and_probas()
+    num_nodes = clf.get_nodes_count()
+
+    # TODO Check tolerance values
+    if np.isclose(cost_max, res["wcp_max"]) and np.isclose(cost_mean, res["wcp_mean"]):
+        print(f"Depth {d}: Reached optimal values (wcp_max={cost_max:.4f}/{res['wcp_max']:.4f} / wcp_mean={cost_mean:.4f}/{res['wcp_mean']:.4f})")
+        break
+else:
+    print("Did not reach optimal values")
 
 
 # %%
