@@ -2,6 +2,7 @@
 import copy
 import json
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
@@ -318,7 +319,9 @@ def evaluate_result(res, splits, input_feature_columns, max_depth=None):
                 "performances": performances,
                 "max_depth": d,
                 "split": None,
+                "timeout": clf.timeout_,
                 "train_time": clf.runtime_,
+                "size": clf.size_,
                 "tree": get_tree_json(
                     clf=clf,
                     feature_names=X_all.columns,
@@ -369,7 +372,9 @@ def evaluate_result(res, splits, input_feature_columns, max_depth=None):
                     "performances": performances,
                     "max_depth": d,
                     "split": fold,
+                    "timeout": clf.timeout_,
                     "train_time": clf.runtime_,
+                    "size": clf.size_,
                     "tree": get_tree_json(
                         clf=clf,
                         feature_names=X_all.columns,
@@ -389,7 +394,10 @@ def evaluate_result(res, splits, input_feature_columns, max_depth=None):
 
 # %%
 
-system = "gcc"
+if len(sys.argv) == 2:
+    system = sys.argv[1]
+else:
+    system = "gcc"
 
 (
     perf_matrix_initial,
