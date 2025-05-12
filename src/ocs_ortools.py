@@ -1,5 +1,4 @@
 import argparse
-import csv
 import json
 from pathlib import Path
 
@@ -17,7 +16,7 @@ def solve_min_sum_selection(
     matrix,
     k,
     optimization_target="mean",
-    prev_solution=None,
+    warm_start_solution=None,
     prev_obj_value=None,
     num_threads=1,
     scaling_factor=10_000,
@@ -40,6 +39,58 @@ def solve_min_sum_selection(
         selected_rows: List of indices of selected rows
         objective_value: Sum of column minimums
     """
+    status, selected_rows, objective_value = solve_model(
+        matrix,
+        k,
+        optimization_target,
+        warm_start_solution,
+        max_obj_value=prev_obj_value,
+        scaling_factor=scaling_factor,
+        num_threads=num_threads,
+    )
+
+    if status != pywraplp.Solver.OPTIMAL:
+        print(f"Status: {status}")
+        print(f"Objective value: {objective_value}")
+        raise ValueError("Not optimal")
+
+    print(f"Objective value: {objective_value}")
+
+    print("Find other solutions")
+    all_solutions = [selected_rows]
+    while status == pywraplp.Solver.OPTIMAL:
+        status, selected_rows, new_objective_value = solve_model(
+            matrix,
+            k,
+            optimization_target,
+            warm_start_solution=all_solutions[-1],
+            max_obj_value=objective_value,
+            scaling_factor=scaling_factor,
+            num_threads=num_threads,
+            prev_solutions=all_solutions,
+        )
+
+        if status == pywraplp.Solver.OPTIMAL:
+            assert objective_value == new_objective_value, (
+                f"Objective value changed in another solution: {objective_value} -> {new_objective_value}"
+            )
+            all_solutions.append(selected_rows)
+
+    print(f"Found {len(all_solutions)} solutions")
+
+    return all_solutions, objective_value
+
+
+def solve_model(
+    matrix,
+    k,
+    optimization_target,
+    warm_start_solution,
+    max_obj_value,
+    scaling_factor,
+    num_threads=1,
+    prev_solutions=None,
+):
     N = len(matrix)  # Number of rows
     M = len(matrix[0])  # Number of columns
 
@@ -76,7 +127,6 @@ def solve_min_sum_selection(
     else:
         # TODO Check two phase optimization, first max then mean
         # More complex for the solver, but better for our experiments
-
         max_mean_value = scaling_factor * N
         max_obj_scale_factor = scaling_factor
         while max_obj_scale_factor < max_mean_value:
@@ -111,11 +161,16 @@ def solve_min_sum_selection(
         solver.Add(y[j] <= solver.Sum([matrix[i][j] * x[i] for i in range(N)]))
 
     # Warm start if previous solution provided
-    if prev_solution is not None:
-        solver.SetHint(x, [1 if i in prev_solution else 0 for i in range(N)])
+    if warm_start_solution is not None:
+        solver.SetHint(x, [1 if i in warm_start_solution else 0 for i in range(N)])
 
-    if prev_obj_value is not None:
-        solver.Add(objective <= prev_obj_value)
+    if max_obj_value is not None:
+        solver.Add(objective <= max_obj_value)
+
+    if prev_solutions is not None:
+        for prev_solution in prev_solutions:
+            assert len(prev_solution) == k, "Previous solution does not have k entries"
+            solver.Add(solver.Sum(x[i] for i in prev_solution) <= k - 1)
 
     solver.SetNumThreads(num_threads)
 
@@ -123,22 +178,18 @@ def solve_min_sum_selection(
 
     # Solve the problem
     status = solver.Solve()
+    objective_value = solver.Objective().Value()
 
     # Check if optimal solution found
     if status != pywraplp.Solver.OPTIMAL:
-        print(f"Status: {status}")
-        print(f"Objective value: {solver.Objective().Value()}")
-        raise ValueError("Not optimal")
+        return status, None, None
 
     assert solver.VerifySolution(1e-7, True)
 
     # Extract results
-    selected_rows = [int(i) for i in range(N) if x[i].solution_value() > 0.5]
-    objective_value = solver.Objective().Value()
+    selected_rows = [int(i) for i in range(len(x)) if x[i].solution_value() > 0.5]
 
-    print(f"Objective value: {objective_value}")
-
-    return selected_rows, objective_value
+    return status, selected_rows, objective_value
 
 
 def find_optimal_configurations(system, optimization_target="mean", num_threads=1):
@@ -221,11 +272,11 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
         for num_configs in range(1, max_configs + 1):
             print(f"\nSolving for {num_configs} configs")
 
-            indices, obj_value = solve_min_sum_selection(
+            all_solutions, obj_value = solve_min_sum_selection(
                 cip_np,
                 num_configs,
                 optimization_target,
-                prev_solution=indices,
+                warm_start_solution=indices,
                 prev_obj_value=obj_value,
                 num_threads=num_threads,
             )
@@ -233,33 +284,34 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
             input_cost = obj_value
 
             # Extract results
-            real_configs = [cfg_map[i] for i in indices]
-            wcp_mean = float(cip.loc[real_configs].min(axis=0).mean())
-            wcp_max = float(cip.loc[real_configs].min(axis=0).max())
+            for indices in all_solutions:
+                real_configs = [cfg_map[i] for i in indices]
+                wcp_mean = float(cip.loc[real_configs].min(axis=0).mean())
+                wcp_max = float(cip.loc[real_configs].min(axis=0).max())
 
-            # Determine which configuration is best for each input
-            # For each input, find the configuration with the minimum performance value
-            selected_configs_df = cip.loc[real_configs]
-            input_to_config_map = {}
+                # Determine which configuration is best for each input
+                # For each input, find the configuration with the minimum performance value
+                selected_configs_df = cip.loc[real_configs]
+                input_to_config_map = {}
 
-            for input_name in selected_configs_df.columns:
-                # Find the configuration with the minimum performance value for this input
-                best_config = selected_configs_df[input_name].idxmin()
-                input_to_config_map[input_name] = best_config
+                for input_name in selected_configs_df.columns:
+                    # Find the configuration with the minimum performance value for this input
+                    best_config = selected_configs_df[input_name].idxmin()
+                    input_to_config_map[input_name] = best_config
 
-            iter_result = {
-                "system": system,
-                "num_performances": len(performances),
-                "performances": performances,
-                "num_configs": num_configs,
-                "selected_configs": real_configs,
-                "input_cost": input_cost,
-                "wcp_mean": wcp_mean,
-                "wcp_max": wcp_max,
-                "optimization_target": optimization_target,
-                "input_to_config_map": input_to_config_map,
-            }
-            results.append(iter_result)
+                iter_result = {
+                    "system": system,
+                    "num_performances": len(performances),
+                    "performances": performances,
+                    "num_configs": num_configs,
+                    "selected_configs": real_configs,
+                    "input_cost": input_cost,
+                    "wcp_mean": wcp_mean,
+                    "wcp_max": wcp_max,
+                    "optimization_target": optimization_target,
+                    "input_to_config_map": input_to_config_map,
+                }
+                results.append(iter_result)
 
             # Create and display formatted table
             table = Table(
@@ -270,11 +322,11 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
             table.add_column("Value", style="magenta")
 
             table.add_row("Number of Configs", str(num_configs))
-            table.add_row("Selected Configs", str(real_configs))
             table.add_row("Input Cost", f"{input_cost:.5f}")
             table.add_row("WCP Mean", f"{wcp_mean:.5f}")
             table.add_row("WCP Max", f"{wcp_max:.5f}")
             table.add_row("Optimization Target", optimization_target)
+            table.add_row("Number of Solutions", str(len(all_solutions)))
 
             console.print(table)
 
@@ -299,38 +351,13 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
 
 
 def save_results(results, system, output_dir="results"):
-    """Save results to CSV and JSON files"""
+    """Save results to JSON file"""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # Create filenames based on system and optimization target
     opt_target = results[0]["optimization_target"]
-    csv_filename = f"ocs_{system}_{opt_target}.csv"
     json_filename = f"ocs_{system}_{opt_target}.json"
-    csv_filepath = Path(output_dir) / csv_filename
     json_filepath = Path(output_dir) / json_filename
-
-    # Prepare results for CSV
-    csv_results = []
-    for result in results:
-        row = {
-            "system": result["system"],
-            "num_performances": result["num_performances"],
-            "performances": str(result["performances"]),
-            "num_configs": result["num_configs"],
-            "selected_configs": str(result["selected_configs"]),
-            "input_cost": result["input_cost"],
-            "wcp_mean": result["wcp_mean"],
-            "wcp_max": result["wcp_max"],
-            "optimization_target": result["optimization_target"],
-            "input_to_config_map": str(result["input_to_config_map"]),
-        }
-        csv_results.append(row)
-
-    # Write to CSV
-    with open(csv_filepath, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=csv_results[0].keys())
-        writer.writeheader()
-        writer.writerows(csv_results)
 
     # Prepare results for JSON
     # We need to convert some non-serializable types to serializable ones
@@ -359,7 +386,7 @@ def save_results(results, system, output_dir="results"):
     with open(json_filepath, "w") as f:
         json.dump(json_results, f, indent=2, cls=NpEncoder)
 
-    print(f"Results saved to {csv_filepath} and {json_filepath}")
+    print(f"Results saved to {json_filepath}")
 
 
 def print_results(results):

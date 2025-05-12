@@ -1,5 +1,4 @@
 import argparse
-import csv
 import json
 from pathlib import Path
 
@@ -130,11 +129,11 @@ def find_optimal_configurations_cv(system, optimization_target="mean", num_threa
                 print(f"\nSolving for {num_configs} configs (Fold {fold_idx})")
 
                 # Solve using training data
-                indices, obj_value = solve_min_sum_selection(
+                all_solutions, obj_value = solve_min_sum_selection(
                     train_matrix,
                     num_configs,
                     optimization_target,
-                    prev_solution=indices,
+                    warm_start_solution=indices,
                     prev_obj_value=obj_value,
                     num_threads=num_threads,
                     scaling_factor=scaling_factor,
@@ -142,54 +141,55 @@ def find_optimal_configurations_cv(system, optimization_target="mean", num_threa
 
                 train_cost = obj_value
 
-                # Extract results and evaluate on test set
-                real_configs = [cfg_map[i] for i in indices]
+                for indices in all_solutions:
+                    # Extract results and evaluate on test set
+                    real_configs = [cfg_map[i] for i in indices]
 
-                # Calculate metrics on training set
-                train_wcp_mean = float(
-                    cip.loc[real_configs][train_inputs].min(axis=0).mean()
-                )
-                train_wcp_max = float(
-                    cip.loc[real_configs][train_inputs].min(axis=0).max()
-                )
+                    # Calculate metrics on training set
+                    train_wcp_mean = float(
+                        cip.loc[real_configs][train_inputs].min(axis=0).mean()
+                    )
+                    train_wcp_max = float(
+                        cip.loc[real_configs][train_inputs].min(axis=0).max()
+                    )
 
-                # Calculate metrics on test set
-                test_wcp_mean = float(
-                    cip.loc[real_configs][test_inputs].min(axis=0).mean()
-                )
-                test_wcp_max = float(
-                    cip.loc[real_configs][test_inputs].min(axis=0).max()
-                )
+                    # Calculate metrics on test set
+                    test_wcp_mean = float(
+                        cip.loc[real_configs][test_inputs].min(axis=0).mean()
+                    )
+                    test_wcp_max = float(
+                        cip.loc[real_configs][test_inputs].min(axis=0).max()
+                    )
 
-                # Determine which configuration is best for each input
-                # For each input, find the configuration with the minimum performance value
-                selected_configs_df = cip.loc[real_configs]
-                input_to_config_map = {}
+                    # Determine which configuration is best for each input
+                    # For each input, find the configuration with the minimum performance value
+                    selected_configs_df = cip.loc[real_configs]
+                    input_to_config_map = {}
 
-                for input_name in selected_configs_df.columns:
-                    if input_name in train_inputs:
-                        # Find the configuration with the minimum performance value for this input
-                        best_config = selected_configs_df[input_name].idxmin()
-                        input_to_config_map[input_name] = best_config
+                    for input_name in selected_configs_df.columns:
+                        if input_name in train_inputs:
+                            # Find the configuration with the minimum performance value for this input
+                            best_config = selected_configs_df[input_name].idxmin()
+                            input_to_config_map[input_name] = best_config
 
-                iter_result = {
-                    "system": system,
-                    "num_performances": len(performances),
-                    "performances": performances,
-                    "num_configs": num_configs,
-                    "selected_configs": real_configs,
-                    "fold": fold_idx,
-                    "train_inputs": train_inputs,
-                    "test_inputs": test_inputs,
-                    "train_cost": train_cost,
-                    "train_wcp_mean": train_wcp_mean,
-                    "train_wcp_max": train_wcp_max,
-                    "test_wcp_mean": test_wcp_mean,
-                    "test_wcp_max": test_wcp_max,
-                    "optimization_target": optimization_target,
-                    "input_to_config_map": input_to_config_map,
-                }
-                results.append(iter_result)
+                    iter_result = {
+                        "system": system,
+                        "num_performances": len(performances),
+                        "performances": performances,
+                        "num_configs": num_configs,
+                        "selected_configs": real_configs,
+                        "fold": fold_idx,
+                        "train_inputs": train_inputs,
+                        "test_inputs": test_inputs,
+                        "train_cost": train_cost,
+                        "train_wcp_mean": train_wcp_mean,
+                        "train_wcp_max": train_wcp_max,
+                        "test_wcp_mean": test_wcp_mean,
+                        "test_wcp_max": test_wcp_max,
+                        "optimization_target": optimization_target,
+                        "input_to_config_map": input_to_config_map,
+                    }
+                    results.append(iter_result)
 
                 # Create and display formatted table
                 table = Table(
@@ -206,6 +206,7 @@ def find_optimal_configurations_cv(system, optimization_target="mean", num_threa
                     "WCP Mean", f"{train_wcp_mean:.5f}", f"{test_wcp_mean:.5f}"
                 )
                 table.add_row("WCP Max", f"{train_wcp_max:.5f}", f"{test_wcp_max:.5f}")
+                table.add_row("Number of Solutions", str(len(all_solutions)))
 
                 console.print(table)
 
@@ -229,41 +230,13 @@ def find_optimal_configurations_cv(system, optimization_target="mean", num_threa
 
 
 def save_results(results, system, output_dir="results"):
-    """Save results to CSV and JSON files"""
+    """Save results to JSON file"""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # Create filenames based on system and optimization target
     opt_target = results[0]["optimization_target"]
-    csv_filename = f"ocs_{system}_{opt_target}_cv.csv"
     json_filename = f"ocs_{system}_{opt_target}_cv.json"
-    csv_filepath = Path(output_dir) / csv_filename
     json_filepath = Path(output_dir) / json_filename
-
-    # Prepare results for CSV
-    csv_results = []
-    for result in results:
-        row = {
-            "system": result["system"],
-            "num_performances": result["num_performances"],
-            "performances": str(result["performances"]),
-            "num_configs": result["num_configs"],
-            "selected_configs": str(result["selected_configs"]),
-            "fold": result["fold"],
-            "train_cost": result["train_cost"],
-            "train_wcp_mean": result["train_wcp_mean"],
-            "train_wcp_max": result["train_wcp_max"],
-            "test_wcp_mean": result["test_wcp_mean"],
-            "test_wcp_max": result["test_wcp_max"],
-            "optimization_target": result["optimization_target"],
-            "input_to_config_map": str(result["input_to_config_map"]),
-        }
-        csv_results.append(row)
-
-    # Write to CSV
-    with open(csv_filepath, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=csv_results[0].keys())
-        writer.writeheader()
-        writer.writerows(csv_results)
 
     # Prepare results for JSON
     # We need to convert some non-serializable types to serializable ones
@@ -292,7 +265,7 @@ def save_results(results, system, output_dir="results"):
     with open(json_filepath, "w") as f:
         json.dump(json_results, f, indent=2, cls=NpEncoder)
 
-    print(f"Results saved to {csv_filepath} and {json_filepath}")
+    print(f"Results saved to {json_filepath}")
 
 
 def print_results(results):
