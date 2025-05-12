@@ -1,7 +1,0 @@
-system,num_performances,performances,num_configs,selected_configs,input_cost,wcp_mean,wcp_max,optimization_target
-lingeling,1,['reductions'],1,[np.int64(25)],1.0,0.563395697259109,1.0,max
-lingeling,1,['reductions'],2,"[np.int64(25), np.int64(99)]",1.0,0.46361745722112857,1.0,max
-lingeling,2,"['reductions', 'cps']",1,[np.int64(16)],1.0,0.5431452912220994,1.0,max
-lingeling,2,"['reductions', 'cps']",2,"[np.int64(16), np.int64(99)]",1.0,0.4462084473093479,1.0,max
-lingeling,3,"['reductions', 'cps', 'conflicts']",1,[np.int64(16)],1.0,0.5486914632542274,1.0,max
-lingeling,3,"['reductions', 'cps', 'conflicts']",2,"[np.int64(16), np.int64(99)]",1.0,0.45152705335941806,1.0,max
