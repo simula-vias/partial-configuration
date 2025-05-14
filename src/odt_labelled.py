@@ -1,15 +1,24 @@
 # %%
 import copy
 import json
+import multiprocessing
+import random
+import time
+from datetime import timedelta
+from functools import partial
 from pathlib import Path
-import sys
 
 import numpy as np
 import pandas as pd
 from pydl85 import DL85Predictor
 from sklearn.preprocessing import KBinsDiscretizer, OneHotEncoder
 
-from common import load_data, NpEncoder
+from common import NpEncoder, load_data
+
+
+def print_if_verbose(verbose, *args, **kwargs):
+    if verbose:
+        print(*args, **kwargs)
 
 
 # From odtlearn, installatin via pip failed somehow
@@ -201,26 +210,35 @@ def train_dl85(X_train, y_train, max_depth):
         max_depth=max_depth,
         error_function=error_fn,
         leaf_value_function=leaf_value_fn,
+        maxcachesize=20_000_000,  # this is the number of nodes, wild guess...
         # time_limit=600,
     )
     clf.fit(X_train)
     return clf
 
 
-def evaluate_result(res, splits, input_feature_columns, max_depth=None):
+def evaluate_result(
+    perf_matrix_initial,
+    res,
+    splits,
+    input_feature_columns,
+    max_depth=None,
+    verbose=True,
+):
     num_configs = res["num_configs"]
     system = res["system"]
     performances = res["performances"]
     min_wcp_mean = res["wcp_mean"]
     min_wcp_max = res["wcp_max"]
     inp_cfg_map = res["input_to_config_map"]
+    selected_configs = res["selected_configs"]
 
-    print("Loaded results:")
-    print(f"System: {system}")
-    print(f"Num. configs: {num_configs}")
-    print(f"Performances: {performances}")
-    print(f"wcp_mean: {min_wcp_mean:.4f}")
-    print(f"wcp_max: {min_wcp_max:.4f}")
+    print_if_verbose(verbose, "Loaded results:")
+    print_if_verbose(verbose, f"System: {system}")
+    print_if_verbose(verbose, f"Num. configs: {num_configs}")
+    print_if_verbose(verbose, f"Performances: {performances}")
+    print_if_verbose(verbose, f"wcp_mean: {min_wcp_mean:.4f}")
+    print_if_verbose(verbose, f"wcp_max: {min_wcp_max:.4f}")
 
     perf_matrix = prepare_perf_matrx(perf_matrix_initial, performances)
 
@@ -263,7 +281,7 @@ def evaluate_result(res, splits, input_feature_columns, max_depth=None):
 
     # Check if they agree
     label_agreement = (y_argmin == y_all).mean()
-    print(f"label agreement: {label_agreement:.2f}")
+    print_if_verbose(verbose, f"label agreement: {label_agreement:.2f}")
 
     def evaluate(
         clf, train_inp, X_train, y_train, test_inp=None, X_test=None, y_test=None
@@ -307,9 +325,10 @@ def evaluate_result(res, splits, input_feature_columns, max_depth=None):
 
     results = []
 
-    print("Training DL8.5 on full dataset")
+    print_if_verbose(verbose, "Training DL8.5 on full dataset")
     for d in range(1, max_depth + 1):
         clf = train_dl85(X_train=X_all, y_train=y_all, max_depth=d)
+        print_if_verbose(verbose, "lattice size", clf.lattice_size_)
         eval_result = evaluate(clf, train_inp=inputnames, X_train=X_all, y_train=y_all)
         results.append(
             {
@@ -317,6 +336,7 @@ def evaluate_result(res, splits, input_feature_columns, max_depth=None):
                 "system": system,
                 "num_configs": num_configs,
                 "performances": performances,
+                "selected_configs": selected_configs,
                 "max_depth": d,
                 "split": None,
                 "timeout": clf.timeout_,
@@ -331,11 +351,12 @@ def evaluate_result(res, splits, input_feature_columns, max_depth=None):
         )
 
         if eval_result["train_acc"] == 1.0:
-            print(f"Stop at depth {d}")
+            print_if_verbose(verbose, f"Stop at depth {d}")
             break
 
     # For CV, make another loop around the splits
-    print("Training DL8.5 on train/test split")
+    print_if_verbose(verbose, "Training DL8.5 on train/test split")
+
     for split in splits:
         fold = split["fold"]
         train_inp = sorted(split["train_inputs"])
@@ -370,6 +391,7 @@ def evaluate_result(res, splits, input_feature_columns, max_depth=None):
                     "system": system,
                     "num_configs": num_configs,
                     "performances": performances,
+                    "selected_configs": selected_configs,
                     "max_depth": d,
                     "split": fold,
                     "timeout": clf.timeout_,
@@ -384,51 +406,132 @@ def evaluate_result(res, splits, input_feature_columns, max_depth=None):
             )
 
             if eval_result["train_acc"] == 1.0:
-                print(f"Stop at depth {d}")
+                print_if_verbose(verbose, f"Stop at depth {d}")
                 break
 
-    print("-" * 8)
+    print_if_verbose(verbose, "-" * 8)
 
     return results
 
 
+def worker_function(res_item, perf_matrix, input_cols, splits_data):
+    """
+    Wrapper function to be called by each process.
+    It calls the original evaluate_result.
+    """
+    # IMPORTANT: If perf_matrix_initial is modified by evaluate_result,
+    # this parallelization approach is NOT safe unless each process
+    # gets a true copy or modifications are handled with locks/proxies.
+    # Assuming evaluate_result treats perf_matrix_initial as read-only.
+    result_list = evaluate_result(
+        perf_matrix_initial=perf_matrix,
+        res=res_item,
+        input_feature_columns=input_cols,
+        splits=splits_data,
+        verbose=False,
+    )
+    return result_list
+
+
 # %%
 
-if len(sys.argv) == 2:
-    system = sys.argv[1]
-else:
-    system = "gcc"
+if __name__ == "__main__":
+    import argparse
 
-(
-    perf_matrix_initial,
-    input_features,
-    config_features,
-    all_performances,
-    input_preprocessor,
-    config_preprocessor,
-) = load_data(system=system, data_dir="../data", input_properties_type="tabular")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--system", type=str, default="gcc")
+    parser.add_argument("--data_dir", type=str, default="../data")
+    parser.add_argument("--result_dir", type=str, default="../results")
+    parser.add_argument("--processes", type=int, default=1)
+    args = parser.parse_args()
 
-result_base_dir = Path("../results")
-result_path = result_base_dir / f"ocs_{system}_both.json"
-target_path = result_base_dir / result_path.name.replace("ocs_", "odt_")
-best_configs = json.load(result_path.open("r"))
+    (
+        perf_matrix_initial,
+        input_features,
+        config_features,
+        all_performances,
+        input_preprocessor,
+        config_preprocessor,
+    ) = load_data(
+        system=args.system, data_dir=args.data_dir, input_properties_type="tabular"
+    )
 
-splits = json.load(open("../data/splits.json"))
-splits = splits[system]
+    data_dir = Path(args.data_dir)
+    result_base_dir = Path(args.result_dir)
+    result_path = result_base_dir / f"ocs_{args.system}_both.json"
+    target_path = result_base_dir / result_path.name.replace("ocs_", "odt_")
+    best_configs = json.load(result_path.open("r"))
 
-all_results = []
+    split_path = Path(args.data_dir) / "splits.json"
+    splits = json.load(split_path.open("r"))
+    splits = splits[args.system]
 
-for res in best_configs:
-    all_results.extend(
-        evaluate_result(
-            res, input_feature_columns=input_features.columns, splits=splits
+    print(f"Using {args.processes} processes for {len(best_configs)} tasks.")
+
+    all_results = []
+
+    if args.processes > 1:
+        # Poor man's load distribution
+        random.shuffle(best_configs)
+
+        task_function = partial(
+            worker_function,
+            perf_matrix=perf_matrix_initial,
+            input_cols=input_features.columns,
+            splits_data=splits,
         )
-    )
-    json.dump(
-        all_results,
-        target_path.open("w"),
-        indent=2,
-        cls=NpEncoder,
-    )
+
+        start_time = time.time()
+        completion_counter = 0
+
+        # maxtasksperchild=1 because I have the suspicion not all memory is freed in pydl8.5
+        with multiprocessing.Pool(processes=args.processes, maxtasksperchild=1) as pool:
+            # map will distribute the items in 'best_configs' to the worker_function
+            # It blocks until all results are ready.
+            # Each call to task_function(res_item) will return a list (from evaluate_result)
+            for result_list in pool.imap_unordered(task_function, best_configs):
+                all_results.extend(result_list)
+
+                # Dump intermediate results
+                # This takes some performance, but iterations are long anyway
+                json.dump(
+                    all_results,
+                    target_path.open("w"),
+                    indent=2,
+                    cls=NpEncoder,
+                )
+
+                # Log progress
+                cur_time = time.time()
+                completion_counter += 1
+                expected_time = (
+                    (cur_time - start_time)
+                    * (len(best_configs) - completion_counter)
+                    / completion_counter
+                )
+                print(
+                    f"{completion_counter}/{len(best_configs)} task completed ({completion_counter / len(best_configs):.2%})"
+                    f" / Expected time remaining: {str(timedelta(seconds=expected_time))}"
+                )
+    else:
+        for res in best_configs:
+            if res["num_configs"] < 11 or len(res["performances"]) != 3:
+                continue
+            all_results.extend(
+                evaluate_result(
+                    perf_matrix_initial=perf_matrix_initial,
+                    res=res,
+                    input_feature_columns=input_features.columns,
+                    splits=splits,
+                )
+            )
+            json.dump(
+                all_results,
+                target_path.open("w"),
+                indent=2,
+                cls=NpEncoder,
+            )
+
+    print("Done.")
 
 # %%

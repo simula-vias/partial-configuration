@@ -13,31 +13,58 @@ from matplotlib.lines import Line2D
 # %%
 # Read all ocs_ files from results directory
 results_dir = Path("../results")
-# all_files = glob.glob(str(results_dir / "ocs_*.csv"))
-# All except _cv files
-all_files = list(
-    filter(lambda s: "_cv.csv" not in s, glob.glob(str(results_dir / "ocs_*.csv")))
-)
+all_files = results_dir.glob("ocs_*.json")
 
-dfs = []
-for file in sorted(all_files):
-    df = pd.read_csv(file)
-    # Extract system and performance metrics from filename
-    filename = Path(file).stem
-    _, system, opt = filename.split("_", maxsplit=2)
-    df["system"] = system
-    df["optimization_target"] = opt
-    df["wcp_mean_normalized"] = df["wcp_mean"] / df["wcp_mean"].max()
-    df["wcp_max_normalized"] = df["wcp_max"] / df["wcp_max"].max()
-    df["wcp_gap"] = df["wcp_max"] - df["wcp_mean"]
-    df["wcp_gap_normalized"] = df["wcp_gap"] / df["wcp_gap"].max()
-    dfs.append(df)
+results = []
+for file in all_files:
+    if file.name == "ocs_results.json":
+        # This is an aggregated file, so we don't need to process it
+        continue
+    df = pd.DataFrame(json.load(file.open("r")))
+    results.append(df)
 
-combined_df = pd.concat(dfs, ignore_index=True)
+# TODO Why are there so many rows? Many have input_cost = nan which makes no sense
+
+df = pd.concat(results)
+
+df["is_cv"] = ~df["fold"].isna()
+df["performances_list"] = df["performances"]
+df["performances"] = df["performances"].apply(lambda x: "_".join(x))
+
+# dfs = []
+# for file in sorted(all_files):
+#     df = pd.read_csv(file)
+#     # Extract system and performance metrics from filename
+#     filename = Path(file).stem
+#     _, system, opt = filename.split("_", maxsplit=2)
+#     df["system"] = system
+#     df["optimization_target"] = opt
+#     df["wcp_mean_normalized"] = df["wcp_mean"] / df["wcp_mean"].max()
+#     df["wcp_max_normalized"] = df["wcp_max"] / df["wcp_max"].max()
+#     df["wcp_gap"] = df["wcp_max"] - df["wcp_mean"]
+#     df["wcp_gap_normalized"] = df["wcp_gap"] / df["wcp_gap"].max()
+#     dfs.append(df)
+
+df_full = df[~df["is_cv"]]
+df_cv = df[df["is_cv"]]
+combined_df = df  # pd.concat(dfs, ignore_index=True)
 # combined_df = combined_df[combined_df["system"] != "sqlite"]
 combined_df = combined_df[combined_df["num_performances"] <= 4]  # only affects sqlite
 # combined_df["num_performances"] = combined_df["num_performances"].astype(str)
 print(f"Read data; shape: {combined_df.shape}")
+
+# %%
+
+# List systems, performances and num_configs with the most solutions
+num_solutions_ranking = df_full[["system", "num_performances", "performances", "num_configs"]].groupby(
+    ["system", "num_performances", "performances", "num_configs"], as_index=False
+).size().sort_values(by="size", ascending=False)
+# np.histogram(num_solutions_ranking)
+num_solutions_ranking
+
+# %%
+# 
+num_solutions_ranking[num_solutions_ranking["size"] > 1].sort_values(by=["num_configs", "size"], ascending=[True, False])
 
 # %%
 
