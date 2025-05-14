@@ -242,8 +242,9 @@ def evaluate_result(
 
     perf_matrix = prepare_perf_matrx(perf_matrix_initial, performances)
 
-    features = perf_matrix[input_feature_columns].drop_duplicates()
-    inputnames = perf_matrix["inputname"].drop_duplicates()
+    feature_matrix = perf_matrix[list(input_feature_columns) + ["inputname"]].drop_duplicates()
+    features = feature_matrix[input_feature_columns]
+    inputnames = feature_matrix["inputname"]
 
     # Transform features
     # X = input_preprocessor.fit_transform(features)
@@ -297,8 +298,8 @@ def evaluate_result(
             test_acc = np.sum(test_pred == y_test) / y_test.shape[0]
             test_wcp_mean = evaluate_wcp_mean(test_pred, test_inp, C)
             test_wcp_max = evaluate_wcp_max(test_pred, test_inp, C)
-            test_wcp_mean_gap = test_wcp_mean / min_wcp_mean
-            test_wcp_max_gap = test_wcp_max / min_wcp_max
+            test_wcp_mean_gap = test_wcp_mean - min_wcp_mean
+            test_wcp_max_gap = test_wcp_max - min_wcp_max
         else:
             test_pred = None
             test_acc = None
@@ -317,8 +318,8 @@ def evaluate_result(
             "test_wcp_max": test_wcp_max,
             "train_pred": y_pred,
             "test_pred": test_pred,
-            "train_wcp_mean_gap": train_wcp_mean / min_wcp_mean,
-            "train_wcp_max_gap": train_wcp_max / min_wcp_max,
+            "train_wcp_mean_gap": train_wcp_mean - min_wcp_mean,
+            "train_wcp_max_gap": train_wcp_max - min_wcp_max,
             "test_wcp_mean_gap": test_wcp_mean_gap,
             "test_wcp_max_gap": test_wcp_max_gap,
         }
@@ -439,9 +440,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--system", type=str, default="gcc")
-    parser.add_argument("--data_dir", type=str, default="../data")
-    parser.add_argument("--result_dir", type=str, default="../results")
+    parser.add_argument("--system", type=str, default="xz")
+    parser.add_argument("--data_dir", type=str, default="./data")
+    parser.add_argument("--result_dir", type=str, default="./results")
     parser.add_argument("--processes", type=int, default=1)
     args = parser.parse_args()
 
@@ -515,8 +516,6 @@ if __name__ == "__main__":
                 )
     else:
         for res in best_configs:
-            if res["num_configs"] < 11 or len(res["performances"]) != 3:
-                continue
             all_results.extend(
                 evaluate_result(
                     perf_matrix_initial=perf_matrix_initial,
