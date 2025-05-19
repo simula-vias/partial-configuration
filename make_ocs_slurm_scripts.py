@@ -10,7 +10,7 @@ systems = json.load(open(data_dir / "metadata.json")).keys()
 for system in systems:
     print(system)
 
-    for ot in ["both"]: # ["mean", "max", "both"]:
+    for ot in ["both", "mean"]: # ["mean", "max", "both"]:
         slurm_file = slurm_dir / f"ocs_{system}_{ot}.sh"
         slurm_file.write_text(f"""#!/bin/sh
 #SBATCH -p fpgaq # partition (queue)
