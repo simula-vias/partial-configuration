@@ -60,7 +60,7 @@ def load_data(
     system,
     input_properties_type="tabular",
     data_dir="../data",
-    num_bins_feature_encoding=10,
+    num_bins_feature_encoding=None,
 ):
     if input_properties_type == "embedding" and system not in ("gcc",):
         raise NotImplementedError(
@@ -76,6 +76,9 @@ def load_data(
     input_columns_cat = system_metadata["input_columns_cat"]
     input_columns_cont = system_metadata["input_columns_cont"]
     performances = system_metadata["performances"]
+
+    if num_bins_feature_encoding is None:
+        num_bins_feature_encoding = system_metadata["num_bins_feature_encoding"]
 
     meas_matrix, _ = load_all_csv(
         os.path.join(data_dir, system), ext="csv", with_names=True

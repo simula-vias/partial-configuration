@@ -242,23 +242,15 @@ def evaluate_result(
 
     perf_matrix = prepare_perf_matrx(perf_matrix_initial, performances)
 
-    feature_matrix = perf_matrix[list(input_feature_columns) + ["inputname"]].drop_duplicates()
+    feature_matrix = perf_matrix[
+        list(input_feature_columns) + ["inputname"]
+    ].drop_duplicates()
     features = feature_matrix[input_feature_columns]
     inputnames = feature_matrix["inputname"]
 
     # Transform features
-    # X = input_preprocessor.fit_transform(features)
-    # feature_names = input_preprocessor.get_feature_names_out()
-
-    # TODO This needs to be validated, n_bins is only used for real_cols
-    # Maybe the input_preprocessor above is the better choice
-    X_all = binarize(
-        features,
-        categorical_cols=[],
-        integer_cols=features.columns,
-        real_cols=[],
-        n_bins=5,
-    )
+    X_all = input_preprocessor.fit_transform(features)
+    feature_names = input_preprocessor.get_feature_names_out()
 
     if max_depth is None:
         max_depth = X_all.shape[1]
