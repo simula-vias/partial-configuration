@@ -227,7 +227,7 @@ def load_data(
             ),
         ],
         remainder="passthrough",
-    )
+    ).set_output(transform="pandas")
     config_preprocessor = ColumnTransformer(
         transformers=[
             (
@@ -250,7 +250,7 @@ def load_data(
             ),
         ],
         remainder="passthrough",
-    )
+    ).set_output(transform="pandas")
 
     return (
         perf_matrix,
