@@ -55,12 +55,18 @@ print(f"Read data; shape: {combined_df.shape}")
 
 # %%
 
-# List systems, performances and num_configs with the most solutions
+# RQ5: List systems, performances and num_configs with the most solutions
 num_solutions_ranking = df_full[["system", "num_performances", "performances", "num_configs"]].groupby(
     ["system", "num_performances", "performances", "num_configs"], as_index=False
 ).size().sort_values(by="size", ascending=False)
 # np.histogram(num_solutions_ranking)
 num_solutions_ranking
+
+# The plots don't show anything interesting
+# We make a table instead
+# One row per system
+# Colums: System, max num solutions, avg. num solutions
+
 
 # %%
 # 
