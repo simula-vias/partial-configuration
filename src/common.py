@@ -7,7 +7,7 @@ from scipy import stats
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import KFold, train_test_split
 from sklearn.multioutput import _MultiOutputEstimator
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import KBinsDiscretizer, OneHotEncoder
 from sklearn.base import ClassifierMixin
 
 
@@ -56,7 +56,12 @@ def load_all_csv(path, ext="csv", with_names=False):
     return all_data, nb_config
 
 
-def load_data(system, input_properties_type="tabular", data_dir="../data"):
+def load_data(
+    system,
+    input_properties_type="tabular",
+    data_dir="../data",
+    num_bins_feature_encoding=10,
+):
     if input_properties_type == "embedding" and system not in ("gcc",):
         raise NotImplementedError(
             f"Input properties `embedding` only available for (gcc,), not `{system}`"
@@ -199,7 +204,15 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
 
     input_preprocessor = ColumnTransformer(
         transformers=[
-            # ("num", PolynomialFeatures(degree=2), input_columns_cont),
+            (
+                "num",
+                KBinsDiscretizer(
+                    n_bins=num_bins_feature_encoding,
+                    encode="onehot-dense",
+                    strategy="uniform",
+                ),
+                input_columns_cont,
+            ),
             (
                 "cat",
                 OneHotEncoder(
@@ -214,7 +227,15 @@ def load_data(system, input_properties_type="tabular", data_dir="../data"):
     )
     config_preprocessor = ColumnTransformer(
         transformers=[
-            # ("num", StandardScaler(), config_columns_cont),
+            (
+                "num",
+                KBinsDiscretizer(
+                    n_bins=num_bins_feature_encoding,
+                    encode="onehot-dense",
+                    strategy="uniform",
+                ),
+                config_columns_cont,
+            ),
             (
                 "cat",
                 OneHotEncoder(
@@ -937,3 +958,55 @@ def get_leaf_values(tree):
     children_right = tree.children_right
     is_leaf = np.logical_and((children_left == -1), (children_right == -1))
     return tree.value[is_leaf].argmax(axis=-1)
+
+
+def label_inputs_argmin(perf_matrix):
+    C = (
+        perf_matrix[["inputname", "configurationID", "worst_case_performance"]]
+        .reset_index()
+        .pivot(
+            index="inputname",
+            columns="configurationID",
+            values="worst_case_performance",
+        )
+        .sort_values("inputname")
+    )
+    # Label each input with the configuration with the lowest WCP for reference
+    y_argmin = np.argmin(C, axis=1)
+    return y_argmin
+
+
+def label_inputs_greedy(perf_matrix, num_classes):
+    C = (
+        perf_matrix[["inputname", "configurationID", "worst_case_performance"]]
+        .reset_index()
+        .pivot(
+            index="inputname",
+            columns="configurationID",
+            values="worst_case_performance",
+        )
+        .sort_values("inputname")
+    ).values
+
+    best_cfg = [C.mean(axis=0).argmin()]
+
+    while len(best_cfg) < num_classes:
+        best_avg = float("inf")
+        best_cfg_iter = None
+
+        for cfg in np.arange(C.shape[1]):
+            if cfg in best_cfg:
+                continue
+
+            # We optimize mean WCP but not WCP max-mean(!)
+            # print()
+            avg = C[:, best_cfg + [cfg]].min(axis=1).mean()  # .argmin()
+            if avg < best_avg:
+                best_avg = avg
+                best_cfg_iter = cfg
+
+        best_cfg.append(best_cfg_iter)
+
+    # Label each input with the configurations from the selection with the lowest WCP
+    y_argmin = np.argmin(C[:, best_cfg], axis=1)
+    return y_argmin

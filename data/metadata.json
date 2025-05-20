@@ -35,7 +35,8 @@
             "exec",
             "size",
             "ctime"
-        ]
+        ],
+        "num_bins_feature_encoding": 5
     },
     "imagemagick": {
         "config_columns": [
@@ -76,7 +77,8 @@
         "performances": [
             "size",
             "time"
-        ]
+        ],
+        "num_bins_feature_encoding": 12
     },
     "lingeling": {
         "config_columns": [
@@ -121,7 +123,8 @@
             "reductions",
             "cps",
             "conflicts"
-        ]
+        ],
+        "num_bins_feature_encoding": 8
     },
     "nodejs": {
         "config_columns": [
@@ -160,7 +163,8 @@
         ],
         "performances": [
             "ops"
-        ]
+        ],
+        "num_bins_feature_encoding": 5
     },
     "poppler": {
         "config_columns": [
@@ -199,7 +203,8 @@
         "performances": [
             "size",
             "time"
-        ]
+        ],
+        "num_bins_feature_encoding": 5
     },
     "sqlite": {
         "config_columns": [
@@ -250,7 +255,8 @@
             "q4", 
             "q15", 
             "q11"
-        ]
+        ],
+        "num_bins_feature_encoding": 12
     },
     "x264": {
         "config_columns": [
@@ -334,7 +340,8 @@
             "kbs",
             "etime",
             "cpu"
-        ]
+        ],
+        "num_bins_feature_encoding": 5
     },
     "xz": {
         "config_columns": [
@@ -364,6 +371,7 @@
         "performances": [
             "size",
             "time"
-        ]
+        ],
+        "num_bins_feature_encoding": 12
     }
 }
