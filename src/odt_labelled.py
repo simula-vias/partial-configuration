@@ -282,7 +282,7 @@ def evaluate_result(
         y_pred = clf.predict(X_train)
         train_acc = np.sum(y_pred == y_train) / y_train.shape[0]
         train_wcp_mean = evaluate_wcp_mean(y_pred, train_inp, C)
-        train_wcp_max = evaluate_wcp_mean(y_pred, train_inp, C)
+        train_wcp_max = evaluate_wcp_max(y_pred, train_inp, C)
         num_classes_used = len(np.unique(y_pred))
 
         if test_inp is not None and X_test is not None and y_test is not None:
