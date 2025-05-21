@@ -262,6 +262,30 @@ def load_data(
     )
 
 
+def prepare_perf_matrix(perf_matrix_initial, performances):
+    nmdf = (
+        perf_matrix_initial[["inputname"] + performances]
+        .groupby("inputname", as_index=True)
+        # .transform(lambda x: scale(x))
+        .transform(lambda x: (x - x.min()) / (x.max() - x.min()))
+    )
+    nmdf["worst_case_performance"] = nmdf[performances].max(axis=1)
+    perf_matrix = pd.merge(
+        perf_matrix_initial,
+        nmdf,
+        suffixes=("_raw", None),
+        left_index=True,
+        right_index=True,
+    )
+    # We adjust the WCP by expressing it as the difference from the best WCP, i.e. the best WCP is always 0
+    perf_matrix["worst_case_performance"] = (
+        perf_matrix[["inputname", "worst_case_performance"]]
+        .groupby("inputname", as_index=True)
+        .transform(lambda x: x - x.min())
+    )
+    return perf_matrix
+
+
 def split_data(perf_matrix, test_size=0.2, verbose=True, random_state=None):
     # We set aside 20% of configurations and 20% of inputs as test data
     # This gives us 4 sets of data, of which we set 3 aside for testing

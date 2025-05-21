@@ -3,13 +3,12 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from ortools.linear_solver import pywraplp
 from rich import box
 from rich.console import Console
 from rich.table import Table
 
-from common import load_data, NpEncoder
+from common import load_data, NpEncoder, prepare_perf_matrix
 
 
 def solve_min_sum_selection(
@@ -223,22 +222,7 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
 
         print(f"{system}: Using {len(performances)} performances: {performances}")
 
-        # Normalize performance metrics
-        nmdf = (
-            perf_matrix_initial[["inputname"] + performances]
-            .groupby("inputname", as_index=True)
-            .transform(lambda x: (x - x.min()) / (x.max() - x.min()))
-        )
-        nmdf["worst_case_performance"] = nmdf[performances].max(axis=1)
-
-        # Prepare performance matrix
-        perf_matrix = pd.merge(
-            perf_matrix_initial,
-            nmdf,
-            suffixes=("_raw", None),
-            left_index=True,
-            right_index=True,
-        )
+        perf_matrix = prepare_perf_matrix(perf_matrix_initial, performances)
 
         # Create configuration-input performance matrix
         cip = perf_matrix[
@@ -329,11 +313,6 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
             table.add_row("Number of Solutions", str(len(all_solutions)))
 
             console.print(table)
-
-            # TODO The lower bound is obviously to pick all configurations?!?!?
-            # And this we can calculate beforehand from the dataset.
-            # Am I stupid?
-            # At the same time, OR-Tools figured that out quite qickly during search anyway
 
             # This is not a reliable stopping criterion for max
             # For wcp_max, we can have iterations without improvement,
