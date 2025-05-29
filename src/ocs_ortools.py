@@ -11,6 +11,13 @@ from rich.table import Table
 from common import load_data, NpEncoder, prepare_perf_matrix
 
 
+def get_result(results, performances, num_configs):
+    for r in results:
+        if r["num_configs"] == num_configs and r["performances"] == performances:
+            return r
+    return None
+
+
 def solve_min_sum_selection(
     matrix,
     k,
@@ -191,15 +198,16 @@ def solve_model(
     return status, selected_rows, objective_value
 
 
-def find_optimal_configurations(system, optimization_target="mean", num_threads=1):
+def find_optimal_configurations(
+    system, optimization_target="mean", num_threads=1, resume_results=None
+):
     """
     Find optimal configurations for a given system and performance metrics.
-
     Args:
         system (str): Name of the system to analyze
         optimization_target (str): Type of optimization - either 'mean' or 'max'
         num_threads (int): Number of threads to use for solving (default: 1)
-
+        resume_results (list or None): Previously loaded results to resume from, or None to start fresh
     Returns:
         list: List of dictionaries containing results for each configuration count
     """
@@ -213,18 +221,19 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
         _,
     ) = load_data(system=system, data_dir="./data", input_properties_type="tabular")
 
-    results = []
+    results = [] if resume_results is None else resume_results.copy()
     console = Console()
     scaling_factor = 10_000
 
+    completed = set()
+    if results:
+        for r in results:
+            completed.add((tuple(r["performances"]), r["num_configs"]))
+
     for num_performances in range(1, len(all_performances) + 1):
         performances = all_performances[:num_performances]
-
         print(f"{system}: Using {len(performances)} performances: {performances}")
-
         perf_matrix = prepare_perf_matrix(perf_matrix_initial, performances)
-
-        # Create configuration-input performance matrix
         cip = perf_matrix[
             ["configurationID", "inputname", "worst_case_performance"]
         ].pivot(
@@ -232,10 +241,7 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
             columns="inputname",
             values="worst_case_performance",
         )
-
-        # Setup optimization parameters
         max_configs = cip.shape[0]
-
         cip_np = np.round(cip * scaling_factor).astype(np.int64).to_numpy()
         cfg_map = {i: cip.index[i] for i in range(cip_np.shape[0])}
 
@@ -252,10 +258,26 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
         indices = [k for k, v in cfg_map.items() if v == seed_cfg]
         obj_value = seed_obj_value
 
-        # Find optimal configurations for increasing numbers of configurations
         for num_configs in range(1, max_configs + 1):
-            print(f"\nSolving for {num_configs} configs")
+            perf_key = (tuple(performances), num_configs)
 
+            # Skip if already done
+            if perf_key in completed:
+                continue
+
+            # Check if previous iteration result triggers early stopping
+            if (
+                resume_results is not None
+                and optimization_target != "max"
+                and num_configs >= 2
+                and len(results) >= 2
+            ):
+                last_result = get_result(results, performances, num_configs - 1)
+                sec_last_result = get_result(results, performances, num_configs - 2)
+                if last_result["train_cost"] == sec_last_result["train_cost"]:
+                    break
+            
+            print(f"\nSolving for {num_configs} configs")
             all_solutions, obj_value = solve_min_sum_selection(
                 cip_np,
                 num_configs,
@@ -264,25 +286,16 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
                 prev_obj_value=obj_value,
                 num_threads=num_threads,
             )
-
             input_cost = obj_value
-
-            # Extract results
             for indices in all_solutions:
                 real_configs = [cfg_map[i] for i in indices]
                 wcp_mean = float(cip.loc[real_configs].min(axis=0).mean())
                 wcp_max = float(cip.loc[real_configs].min(axis=0).max())
-
-                # Determine which configuration is best for each input
-                # For each input, find the configuration with the minimum performance value
                 selected_configs_df = cip.loc[real_configs]
                 input_to_config_map = {}
-
                 for input_name in selected_configs_df.columns:
-                    # Find the configuration with the minimum performance value for this input
                     best_config = selected_configs_df[input_name].idxmin()
                     input_to_config_map[input_name] = best_config
-
                 iter_result = {
                     "system": system,
                     "num_performances": len(performances),
@@ -297,6 +310,7 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
                 }
                 results.append(iter_result)
 
+            completed.add(perf_key)
             # Create and display formatted table
             table = Table(
                 title=f"{system} (|P| = {len(performances)}/{len(all_performances)}): Iteration {num_configs}",
@@ -304,14 +318,12 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
             )
             table.add_column("Metric", style="cyan")
             table.add_column("Value", style="magenta")
-
             table.add_row("Number of Configs", str(num_configs))
             table.add_row("Input Cost", f"{input_cost:.5f}")
             table.add_row("WCP Mean", f"{wcp_mean:.5f}")
             table.add_row("WCP Max", f"{wcp_max:.5f}")
             table.add_row("Optimization Target", optimization_target)
             table.add_row("Number of Solutions", str(len(all_solutions)))
-
             console.print(table)
 
             # This is not a reliable stopping criterion for max
@@ -329,14 +341,19 @@ def find_optimal_configurations(system, optimization_target="mean", num_threads=
     return results
 
 
+def result_file_path(system, opt_target, output_dir="results", suffix=""):
+    json_filename = f"ocs_{system}_{opt_target}{suffix}.json"
+    json_filepath = Path(output_dir) / json_filename
+    return json_filepath
+
+
 def save_results(results, system, output_dir="results"):
     """Save results to JSON file"""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # Create filenames based on system and optimization target
     opt_target = results[0]["optimization_target"]
-    json_filename = f"ocs_{system}_{opt_target}.json"
-    json_filepath = Path(output_dir) / json_filename
+    json_filepath = result_file_path(system, opt_target, output_dir)
 
     # Prepare results for JSON
     # We need to convert some non-serializable types to serializable ones
@@ -411,6 +428,27 @@ def print_results(results):
     console.print("\n")
 
 
+def try_load_results(system, opt_target, output_dir="results", suffix=""):
+    json_filepath = result_file_path(system, opt_target, output_dir, suffix)
+
+    if not json_filepath.exists():
+        print(f"Did not find previous results at {json_filepath}. Starting fresh.")
+        return None
+    try:
+        with open(json_filepath, "r") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            print(
+                f"Previous results at {json_filepath} are not a list. Starting fresh."
+            )
+            return None
+        print(f"Loaded {len(data)} previous results from {json_filepath}")
+        return data
+    except Exception as e:
+        print(f"Warning: Could not load {json_filepath}: {e}. Starting fresh.")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Find optimal configurations for a system using OR-Tools"
@@ -437,13 +475,21 @@ def main():
         help="Number of threads to use for solving",
         default=1,
     )
-
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Start fresh and ignore any existing results file",
+    )
     args = parser.parse_args()
 
+    resume_results = (
+        None if args.reset else try_load_results(args.system, args.optimize_type)
+    )
     results = find_optimal_configurations(
         args.system,
         args.optimize_type,
         num_threads=args.threads,
+        resume_results=resume_results,
     )
     print_results(results)
     save_results(results, args.system)

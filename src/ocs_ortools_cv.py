@@ -10,10 +10,23 @@ from rich.table import Table
 
 from common import load_data, NpEncoder
 from create_splits import read_splits
-from ocs_ortools import solve_min_sum_selection
+from ocs_ortools import solve_min_sum_selection, try_load_results
 
 
-def find_optimal_configurations_cv(system, optimization_target="mean", num_threads=1):
+def get_result(results, performances, num_configs, fold_idx):
+    for r in results:
+        if (
+            r["num_configs"] == num_configs
+            and r["fold"] == fold_idx
+            and r["performances"] == performances
+        ):
+            return r
+    return None
+
+
+def find_optimal_configurations_cv(
+    system, optimization_target="mean", num_threads=1, resume_results=None
+):
     """
     Find optimal configurations using cross-validation for a given system and performance metrics.
     Uses pre-defined splits from data/splits.json.
@@ -36,9 +49,15 @@ def find_optimal_configurations_cv(system, optimization_target="mean", num_threa
         _,
     ) = load_data(system=system, data_dir="./data", input_properties_type="tabular")
 
-    results = []
+    results = [] if resume_results is None else resume_results.copy()
     console = Console()
     scaling_factor = 10_000
+
+    # Build a set of completed (num_performances, num_configs, optimization_target) for fast skip
+    completed = set()
+    if results:
+        for r in results:
+            completed.add((tuple(r["performances"]), r["fold"], r["num_configs"]))
 
     # Load pre-defined splits from splits.json
     try:
@@ -126,6 +145,27 @@ def find_optimal_configurations_cv(system, optimization_target="mean", num_threa
 
             # Find optimal configurations for increasing numbers of configurations
             for num_configs in range(1, max_configs + 1):
+                perf_key = (tuple(performances), fold_idx, num_configs)
+                # Skip if already done
+                if perf_key in completed:
+                    continue
+
+                # Check if previous iteration result triggers early stopping
+                if (
+                    resume_results is not None
+                    and optimization_target != "max"
+                    and num_configs >= 2
+                    and len(results) >= 2
+                ):
+                    last_result = get_result(
+                        results, performances, num_configs - 1, fold_idx
+                    )
+                    sec_last_result = get_result(
+                        results, performances, num_configs - 2, fold_idx
+                    )
+                    if last_result["train_cost"] == sec_last_result["train_cost"]:
+                        break
+
                 print(f"\nSolving for {num_configs} configs (Fold {fold_idx})")
 
                 # Solve using training data
@@ -191,6 +231,7 @@ def find_optimal_configurations_cv(system, optimization_target="mean", num_threa
                     }
                     results.append(iter_result)
 
+                completed.add(perf_key)
                 # Create and display formatted table
                 table = Table(
                     title=f"{system} (|P| = {len(performances)}/{len(all_performances)}): Fold {fold_idx}, Configs {num_configs}",
@@ -351,13 +392,23 @@ def main():
         help="Number of threads to use for solving",
         default=1,
     )
-
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Start fresh and ignore any existing results file",
+    )
     args = parser.parse_args()
 
+    resume_results = (
+        None
+        if args.reset
+        else try_load_results(args.system, args.optimize_type, suffix="_cv")
+    )
     results = find_optimal_configurations_cv(
         args.system,
         args.optimize_type,
         num_threads=args.threads,
+        resume_results=resume_results,
     )
     print_results(results)
     save_results(results, args.system)
