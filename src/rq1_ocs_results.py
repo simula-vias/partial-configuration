@@ -21,6 +21,27 @@ for file in all_files:
         # This is an aggregated file, so we don't need to process it
         continue
     df = pd.DataFrame(json.load(file.open("r")))
+
+    if "fold" in df.columns:
+        # Normalize CV columns
+        # TODO Normalize per fold
+        df["train_wcp_mean_normalized"] = df["train_wcp_mean"] / df["train_wcp_mean"].max()
+        df["train_wcp_max_normalized"] = df["train_wcp_max"] / df["train_wcp_max"].max()
+        df["train_wcp_gap"] = df["train_wcp_max"] - df["train_wcp_mean"]
+        df["train_wcp_gap_normalized"] = df["train_wcp_gap"] / df["train_wcp_gap"].max()
+
+        df["test_wcp_mean_normalized"] = df["test_wcp_mean"] / df["test_wcp_mean"].max()
+        df["test_wcp_max_normalized"] = df["test_wcp_max"] / df["test_wcp_max"].max()
+        df["test_wcp_gap"] = df["test_wcp_max"] - df["test_wcp_mean"]
+        df["test_wcp_gap_normalized"] = df["test_wcp_gap"] / df["test_wcp_gap"].max()
+    
+    else:
+        df["wcp_mean_normalized"] = df["wcp_mean"] / df["wcp_mean"].max()
+        df["wcp_max_normalized"] = df["wcp_max"] / df["wcp_max"].max()
+
+        df["wcp_gap"] = df["wcp_max"] - df["wcp_mean"]
+        df["wcp_gap_normalized"] = df["wcp_gap"] / df["wcp_gap"].max()
+
     results.append(df)
 
 # TODO Why are there so many rows? Many have input_cost = nan which makes no sense
@@ -31,26 +52,11 @@ df["is_cv"] = ~df["fold"].isna()
 df["performances_list"] = df["performances"]
 df["performances"] = df["performances"].apply(lambda x: "_".join(x))
 
-# dfs = []
-# for file in sorted(all_files):
-#     df = pd.read_csv(file)
-#     # Extract system and performance metrics from filename
-#     filename = Path(file).stem
-#     _, system, opt = filename.split("_", maxsplit=2)
-#     df["system"] = system
-#     df["optimization_target"] = opt
-#     df["wcp_mean_normalized"] = df["wcp_mean"] / df["wcp_mean"].max()
-#     df["wcp_max_normalized"] = df["wcp_max"] / df["wcp_max"].max()
-#     df["wcp_gap"] = df["wcp_max"] - df["wcp_mean"]
-#     df["wcp_gap_normalized"] = df["wcp_gap"] / df["wcp_gap"].max()
-#     dfs.append(df)
-
 df_full = df[~df["is_cv"]]
 df_cv = df[df["is_cv"]]
 combined_df = df  # pd.concat(dfs, ignore_index=True)
 # combined_df = combined_df[combined_df["system"] != "sqlite"]
 combined_df = combined_df[combined_df["num_performances"] <= 4]  # only affects sqlite
-# combined_df["num_performances"] = combined_df["num_performances"].astype(str)
 print(f"Read data; shape: {combined_df.shape}")
 
 # %%
@@ -167,6 +173,7 @@ p
 
 # %%
 # Reshape data to long format for plotting both metrics
+combined_df["num_performances"] = combined_df["num_performances"].astype("str")
 plot_df = pd.melt(
     combined_df,
     id_vars=["num_configs", "system", "optimization_target", "num_performances"],
@@ -233,18 +240,42 @@ p
 
 
 # %%
-combined_df.head()
-
-# %%
 
 gccdf = combined_df[combined_df.system == "gcc"].drop(
     columns=["performances", "selected_configs", "optimization_target"]
 )
-# %%
 gccdf[["system", "num_configs", "wcp_mean_normalized"]].groupby(
     ["system", "num_configs"], as_index=False
 ).mean().plot(x="num_configs", y="wcp_mean_normalized")
 plt.show()
+
+# %%
+
+p = (
+    p9.ggplot(
+        combined_df[combined_df["system"] != "sqlite"],
+        p9.aes(
+            x="num_configs",
+            y="wcp_mean_normalized",
+            color="system",
+            linetype="num_performances",
+        ),
+    )
+    + p9.geom_line()
+    + p9.theme_minimal()
+    # + p9.scale_x_continuous(
+    #     breaks=[1] + list(range(5, combined_df["num_configs"].max() + 1, 5))
+    # )
+    # + p9.scale_color_cmap(cmap_name="tab20")
+    + p9.labs(
+        title="WCP Mean vs Number of Configurations",
+        x="Number of Configurations",
+        y="Normalized WCP Mean",
+        color="Number of\nPerformances",
+    )
+)
+p
+
 
 # %%
 
@@ -329,12 +360,11 @@ def plot_wcp_mean_max_by_system(
     combined_df, optimization_target="mean", plot_title=False
 ):
     mean_opt_df = (
-        combined_df[combined_df["optimization_target"] == optimization_target]
+        combined_df[combined_df["optimization_target"] == optimization_target][["wcp_mean", "wcp_max", "system", "num_configs"]]
         .groupby(["system", "num_configs"], as_index=False)
         .min()
     )
     performance_numbers = list(map(str, sorted(mean_opt_df["num_configs"].unique())))
-    print(performance_numbers)
     mean_opt_df["num_configs"] = mean_opt_df["num_configs"].astype(str)
 
     # Create long format data for plotting wcp_max and wcp_mean as separate points
@@ -375,11 +405,6 @@ def plot_wcp_mean_max_by_system(
     # Define markers for the metrics
     markers = {"wcp_mean": "x", "wcp_max": 7}
 
-    # Define a color palette similar to the one used in plotnine
-    colors = cm.Set2.colors[: len(performance_numbers)]
-    color_map = dict(zip(performance_numbers, colors))
-    print(color_map)
-
     # Calculate the width for dodging
     dodge_width = 0.7
     bar_width = dodge_width / len(performance_numbers)
@@ -389,7 +414,6 @@ def plot_wcp_mean_max_by_system(
         len(performance_numbers),
     )
     offset_map = dict(zip(performance_numbers, offsets))
-    print(offset_map)
 
     # Plot each system and performance combination
     for system_idx, system in enumerate(systems):
@@ -501,61 +525,7 @@ def plot_wcp_mean_max_by_system(
 
     plt.show()
 
-
-# plot_wcp_mean_max_by_system(combined_df, optimization_target="mean", plot_title=True)
-
-
-plot_wcp_mean_max_by_system(combined_df, optimization_target="max", plot_title=True)
-
-# %%
-
-# Plot WCP max and mean with different line styles and colors by number of performances
-ccdf = combined_df[combined_df["optimization_target"] == "both"].copy()
-ccdf["num_performances"] = ccdf["num_performances"].astype(str)
-
-# Create separate plots for max and mean WCP
-p = (
-    p9.ggplot(ccdf)
-    +
-    # WCP max line (solid)
-    p9.geom_line(
-        p9.aes(
-            x="num_configs",
-            y="wcp_max",
-            color="num_performances",
-            group="num_performances",
-            # linetype="WCP Type"
-        ),
-        linetype="solid",
-    )
-    +
-    # WCP mean line (dashed)
-    p9.geom_line(
-        p9.aes(
-            x="num_configs",
-            y="wcp_mean",
-            color="num_performances",
-            group="num_performances",
-            # linetype="WCP Type"
-        ),
-        linetype="dashed",
-    )
-    + p9.theme_minimal()
-    + p9.facet_wrap("~system", scales="free", nrow=2)
-    + p9.labs(
-        title="WCP Max and Mean vs Number of Configurations",
-        x="Number of Configurations",
-        y="WCP Value",
-        color="Number of\nPerformances",
-    )
-    + p9.scale_linetype_manual(
-        name="WCP Type", values=["solid", "dashed"], labels=["WCP Max", "WCP Mean"]
-    )
-)
-p
-# %%
-combined_df.num_performances.max()
-# %%
+plot_wcp_mean_max_by_system(df_full, optimization_target="mean", plot_title=True)
 
 # %%
 # This is the plot for RQ1
@@ -719,7 +689,7 @@ def export_combined_df_to_json(df, output_path):
                 }
 
                 # Add selected_configs if available and convert to list of integers
-                if "selected_configs" in row and not pd.isna(row["selected_configs"]):
+                if "selected_configs" in row:
                     # Parse the string representation of the list
                     if isinstance(row["selected_configs"], str):
                         # Remove brackets and split by commas
