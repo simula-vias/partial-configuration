@@ -53,3 +53,6 @@ split_data[["system", "num_configs", "performances", "max_depth"]].groupby(
 
 # How to quantify error in a single number?
 # It's just the WCP for the predictions
+
+# Plot 1: x: depth / y: wcp
+# Plot 2: x: 
