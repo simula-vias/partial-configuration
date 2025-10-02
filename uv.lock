@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -347,6 +347,27 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/e0/c2262f941a43b810c5c192db94b5d1ce8eda91bec2757f7e2416398f4072/fonttools-4.58.0-cp313-cp313-win32.whl", hash = "sha256:2b32b7130277bd742cb8c4379a6a303963597d22adea77a940343f3eadbcaa4c", size = 2171919, upload-time = "2025-05-10T17:36:10.644Z" },
     { url = "https://files.pythonhosted.org/packages/8f/ee/e4aa7bb4ce510ad57a808d321df1bbed1eeb6e1dfb20aaee1a5d9c076849/fonttools-4.58.0-cp313-cp313-win_amd64.whl", hash = "sha256:75e68ee2ec9aaa173cf5e33f243da1d51d653d5e25090f2722bc644a78db0f1a", size = 2222972, upload-time = "2025-05-10T17:36:12.495Z" },
     { url = "https://files.pythonhosted.org/packages/9b/1f/4417c26e26a1feab85a27e927f7a73d8aabc84544be8ba108ce4aa90eb1e/fonttools-4.58.0-py3-none-any.whl", hash = "sha256:c96c36880be2268be409df7b08c5b5dacac1827083461a6bc2cb07b8cbcec1d7", size = 1111440, upload-time = "2025-05-10T17:36:33.607Z" },
+]
+
+[[package]]
+name = "gosdt"
+version = "1.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "scikit-learn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4e/5b/907434c6d07537f0de7a9399c13bbafd7363eb2b740008f6ecbbd4d39bdb/gosdt-1.0.4.tar.gz", hash = "sha256:9bb5dffb4d78b783930cabbc61b8faf1c368f1ab3cede8688df6db21a52282a6", size = 173213, upload-time = "2025-05-06T18:02:36.716Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a5/52/72a0429ddce58ca9c06c87d3339a7142d98741f9c4279ebdf75431d750f9/gosdt-1.0.4-cp311-cp311-macosx_13_0_x86_64.whl", hash = "sha256:a6ffbc32f5ef773206fb6ac4368a2de78c81bbb9f392f1a9ea8e245d2bf29b1d", size = 698015, upload-time = "2025-05-06T18:02:13.655Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/6e/e9bca9847689b3e9646f66a66007b98268977f045d91aee82d777f76124d/gosdt-1.0.4-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:3656c3402a78acb7efc4c9a9868f8764eebb883901130f58b40ec9dbfbe6aa13", size = 609990, upload-time = "2025-05-06T18:02:15Z" },
+    { url = "https://files.pythonhosted.org/packages/29/aa/06dda9883af5a2185fc1b7eb056b9e1765623afc7590d7a5926473ed10ae/gosdt-1.0.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:46e2c6f09115642d0aedca57970a56b1fdf7f342c1836b12193bc0781e0562ab", size = 3268858, upload-time = "2025-05-06T18:02:17.024Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/2b/1803058fdc022220308eb06e7ec5e39310c95c50d171935a728b71c26793/gosdt-1.0.4-cp311-cp311-win_amd64.whl", hash = "sha256:84754b51b83212fed5da61eebab5386c9ed066d4c953236bf7c5d7ebc7e85d92", size = 799352, upload-time = "2025-05-06T18:02:18.864Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/6c/eca2c525d8a4b7751ab372bdf532b6bc18d22d4c4bd8c35562096d6260ec/gosdt-1.0.4-cp312-cp312-macosx_13_0_x86_64.whl", hash = "sha256:44f107baff6b5d49f848ea483f326ec6486100376bb3d88a015d69d28c320e2b", size = 700167, upload-time = "2025-05-06T18:02:20.996Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/84/522b588ff603db9af97b82a1e07412ad7460e27b60eb670d4d441951c4fe/gosdt-1.0.4-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:75c68c7dae0c360a832b25125d9a5cfaa6e18fa2374534822322d5c90409437f", size = 610878, upload-time = "2025-05-06T18:02:22.489Z" },
+    { url = "https://files.pythonhosted.org/packages/32/59/590855bf1ea81c09951a8950920f2de2a8fcad68d24a43b970aef96199d2/gosdt-1.0.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9f61fffe7c55cd820d801e95ba7f2df851571af59717c68d58ce58d76fe910fd", size = 3268052, upload-time = "2025-05-06T18:02:25.13Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/ab/675b2dd8c9ce347265a9bacd1c02ff10c2c5141e21b8cb0f56540d813b2f/gosdt-1.0.4-cp312-cp312-win_amd64.whl", hash = "sha256:ec5183f74188e4a57771751c05b2764c3d990554ea994fd7cc30e7dce4257a44", size = 799803, upload-time = "2025-05-06T18:02:26.618Z" },
 ]
 
 [[package]]
@@ -874,6 +895,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastcluster" },
+    { name = "gosdt" },
     { name = "mlxtend" },
     { name = "numpy" },
     { name = "ortools" },
@@ -895,6 +917,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastcluster", specifier = ">=1.3.0" },
+    { name = "gosdt", specifier = ">=1.0.4" },
     { name = "mlxtend", specifier = ">=0.23.4" },
     { name = "numpy", specifier = ">=2.2.5" },
     { name = "ortools", specifier = "<9.12.0" },
