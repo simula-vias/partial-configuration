@@ -37,30 +37,30 @@ for s in systems:
             )
     
     for performances in all_perf_list:
+        for classifier in ["dt", "rf", "gosdt", "dl85"]:
+            cmd = [
+                "python",
+                "src/rq0_train_single_wcp_1cfg.py",
+                "--system",
+                s,
+                "--performances",
+                ",".join(performances),
+                "--classifier",
+                classifier,
+            ]
+            print(f"{' '.join(cmd)}")
 
-        cmd = [
-            "python",
-            "src/train_dt_wcp_1cfg.py",
-            "--system",
-            s,
-            "--performances",
-            ",".join(performances),
-        ]
-        print(f"{' '.join(cmd)}")
-
-        script = f"""#!/bin/sh
-#SBATCH -p rome16q # partition (queue)
+            script = f"""#!/bin/sh
+#SBATCH -p slowq # partition (queue)
 #SBATCH --nodes 1
 #SBATCH --ntasks 1
-#SBATCH --cpus-per-task 32
+#SBATCH --cpus-per-task 8
 #SBATCH -t 14-00:00 # time (D-HH:MM)
-#SBATCH -o slurm.dt_xz.%N.%j.out # STDOUT
-#SBATCH -e slurm.dt_xz.%N.%j.err # STDERR
+#SBATCH -o slurm.wcp_{classifier}_{s}_{'-'.join(performances)}.%N.%j.out # STDOUT
+#SBATCH -e slurm.wcp_{classifier}_{s}_{'-'.join(performances)}.%N.%j.err # STDERR
 
 echo "Running WCP for system {s} with performances {performances}"
-srun uv run {cmd}
+srun uv run {' '.join(cmd)}
 echo "Done"
 """
-
-
-        # subprocess.run(cmd, check=True)
+            open(f"./slurm/wcp_{classifier}_{s}_{'-'.join(performances)}.sh", "w").write(script)
