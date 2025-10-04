@@ -3,11 +3,21 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy import stats
 import numpy as np
+from glob import glob
 
 # %%
-# Load the data
-df = pd.read_csv("../results/wcp_1cfg.csv")
-df.head()
+
+files = glob("./results/wcp_1cfg_*.json")
+
+dfs = [pd.read_json(f) for f in files]
+df = pd.concat(dfs)
+
+print(df.columns)
+
+df.sample(6)
+
+
+
 
 # %%
 sdc_max_better = (df["sdc_max"] < df["overall_max"]).mean()
@@ -78,7 +88,7 @@ def create_system_plots():
             'sdc_avg': 'mean',
             'overall_max': 'mean',
             'overall_avg': 'mean',
-            'num_predictable_configs': 'mean'  # Add this column
+            'num_predictable_configs': 'mean'
         }).reset_index()
         
         # Plot data
@@ -271,7 +281,7 @@ create_merged_boxplot_system_plots()
 # RQ0: Create publication-quality plots
 def create_publication_plots():
     # Get unique systems
-    systems = df['system'].unique()
+    systems = sorted(df['system'].unique())
     
     # Fixed layout with two rows
     n_cols = len(systems) // 2 + len(systems) % 2  # Ceiling division
@@ -403,3 +413,17 @@ def create_publication_plots():
 # Call the function to create publication-quality plots
 create_publication_plots()
 
+
+# %%
+df["num_performances"] = df.performances.str.split("-").apply(len)
+# %%
+df["performances"].unique().shape
+# %%
+df["num_performances"].unique().shape
+# %%
+
+# We want a table that shows standard SDC is not super good.
+# However, what is SDC in this case?
+
+df[["system", "num_performances", "num_leaf_nodes", "sdc_max", "sdc_avg", "overall_max", "overall_avg", "average_max", "average_avg", "common_max", "common_avg" ]].groupby(["system", "num_performances"]).mean()
+# %%
