@@ -62,7 +62,7 @@ parser.add_argument(
 )
 
 # Parse the arguments
-args = parser.parse_args("--system gcc --performances size --classifier dl85".split())
+args = parser.parse_args()
 
 s = args.system
 all_performances = sorted(args.performances.split(","))
