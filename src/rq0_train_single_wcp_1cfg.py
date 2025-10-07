@@ -238,7 +238,7 @@ for split_idx, (train_inp_idx, test_inp_idx) in enumerate(kf_inp.split(inputname
         #     "max_leaves": range(2, 100),
         #     "time_limit": [300],
         # }
-        clf = DL85Classifier(max_depth=X.shape[1])
+        clf = DL85Classifier(max_depth=X.shape[1], maxcachesize=200_000_000)
     else:
         raise ValueError(f"Unknown classifier: {classifier}")
 
