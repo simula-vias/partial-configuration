@@ -20,6 +20,10 @@ from common import (
     load_data,
 )
 
+import warnings
+
+warnings.simplefilter(action="ignore", category=FutureWarning)
+
 # Create the parser
 parser = argparse.ArgumentParser(
     description="Train decision tree for worst-case performance."
@@ -219,14 +223,14 @@ for split_idx, (train_inp_idx, test_inp_idx) in enumerate(kf_inp.split(inputname
         )
     elif classifier == "gosdt":
         # Doesn't work with GridSearchCV for me
-        # I receive segmentation fault errors 
+        # I receive segmentation fault errors
         # parameter_grid = {
         #     "regularization": [0.1, 1, 10],
         #     "depth_budget": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         # }
         clf = gosdt.GOSDTClassifier(
-            regularization=max(1/X.shape[0], 0.05),
-            verbose=False)
+            regularization=max(1 / X.shape[0], 0.05), verbose=False
+        )
     elif classifier == "dl85":
         # Does not support sklearn GridSearchCV
         # parameter_grid = {
@@ -285,10 +289,10 @@ for split_idx, (train_inp_idx, test_inp_idx) in enumerate(kf_inp.split(inputname
     baseline["sdc_max"] = sdc_wcp.max()
     split_result.update(baseline)
 
-    split_result["max_depth"] = max_depth / X.shape[1]
-    split_result["num_predictable_configs"] = num_predictable_configs
-    split_result["num_total_configs"] = num_total_configs
-    split_result["num_performances"] = num_p
+    split_result["max_depth"] = float(max_depth / X.shape[1])
+    split_result["num_predictable_configs"] = int(num_predictable_configs)
+    split_result["num_total_configs"] = int(num_total_configs)
+    split_result["num_performances"] = int(num_p)
 
     # print(json.dumps(split_result, indent=2, sort_keys=True))
 
